@@ -52,7 +52,16 @@ export const Limits = {
   imageQuality: 0.7,
 } as const;
 
-export const Ice: RTCConfiguration = {
+/**
+ * ICE configuration.
+ *
+ * Deliberately not annotated with the DOM's `RTCConfiguration`: TypeScript's
+ * built-in lib.dom types and react-native-webrtc's own are structurally
+ * different (their `certificates` and session-description types disagree), and
+ * annotating with the DOM one makes this object unassignable to the native
+ * RTCPeerConnection. Inference keeps it compatible with both.
+ */
+export const Ice = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },

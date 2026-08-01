@@ -19,6 +19,12 @@ const db: FirebaseDatabaseTypes.Module = Env.rtdbUrl
 db.setPersistenceEnabled(true);
 
 export type Ref = FirebaseDatabaseTypes.Reference;
+/**
+ * A filtered/ordered view of a path. `ref(p).orderByChild(...).limitToLast(n)`
+ * returns this, not a Reference — subscribing is all the listeners below need,
+ * so they accept either.
+ */
+export type Query = FirebaseDatabaseTypes.Query;
 export type Snapshot = FirebaseDatabaseTypes.DataSnapshot;
 export type Unsubscribe = () => void;
 
@@ -83,7 +89,7 @@ export function serverTimestamp(): object {
 
 /** Subscribe to a path; returns an unsubscribe you can call unconditionally. */
 export function onValue(
-  path: string | Ref,
+  path: string | Ref | Query,
   cb: (snap: Snapshot) => void,
   onError?: (e: Error) => void
 ): Unsubscribe {
@@ -100,7 +106,7 @@ export function onValue(
 }
 
 export function onChildAdded(
-  path: string | Ref,
+  path: string | Ref | Query,
   cb: (snap: Snapshot) => void
 ): Unsubscribe {
   const r = typeof path === 'string' ? ref(path) : path;

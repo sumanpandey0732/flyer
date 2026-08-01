@@ -1,0 +1,226 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
+import * as SplashScreen from 'expo-splash-screen';
+import { Stack, router, useRootNavigationState, useSegments } from 'expo-router';
+import { ThemeProvider, useTheme } from '@/src/theme/ThemeProvider';
+import { Banner, type BannerPayload } from '@/src/components/Banner';
+import { NetworkBanner } from '@/src/components/NetworkBanner';
+import { CallOverlay } from '@/src/components/CallOverlay';
+import { useAppStore, appState } from '@/src/services/StateManager';
+import * as Auth from '@/src/services/AuthManager';
+import * as Notifications from '@/src/services/NotificationManager';
+import { startPresence, stopPresence } from '@/src/services/PresenceManager';
+import { CallManager } from '@/src/services/CallManager';
+import { listenToChats, listenToBlocks, listenToUser } from '@/src/services/ChatEngine';
+import { startOutbox, stopOutbox } from '@/src/services/OfflineQueue';
+import { hydrateSmartReply } from '@/src/services/SmartReplyService';
+import { Paths, onValue } from '@/src/services/FirebaseService';
+import type { UserProfile } from '@/src/config/types';
+
+/**
+ * Root layout.
+ *
+ * Owns every session-scoped subscription in the app: presence, the chat-list
+ * listener, the block list, push registration, the offline outbox, and the call
+ * manager's incoming-invite listener. All of them are keyed on the signed-in uid
+ * and torn down on sign-out — a listener that outlives its session keeps writing
+ * with stale credentials and, in the case of presence, leaves the user pinned
+ * "online" forever.
+ *
+ * The FCM *background* handler is not here. It is registered in index.js before
+ * this module is even imported, because Android delivers the data message that
+ * woke the process before React mounts.
+ */
+
+// Keep the native splash up until auth has resolved, so the app never flashes
+// the login screen at someone who is already signed in.
+void SplashScreen.preventAutoHideAsync().catch(() => {});
+
+function useAuthGate() {
+  const currentUser = useAppStore((s) => s.currentUser);
+  const authReady = useAppStore((s) => s.authReady);
+  const segments = useSegments();
+  const navState = useRootNavigationState();
+
+  useEffect(() => {
+    // Navigating before the router has mounted throws; wait for it.
+    if (!navState?.key || !authReady) return;
+
+    const inAuthFlow = segments[0] === 'login';
+
+    if (!currentUser && !inAuthFlow) {
+      router.replace('/login');
+    } else if (currentUser && inAuthFlow) {
+      router.replace('/(tabs)');
+    }
+  }, [currentUser, authReady, segments, navState?.key]);
+}
+
+function RootNavigator() {
+  const theme = useTheme();
+  const authReady = useAppStore((s) => s.authReady);
+  const [banner, setBanner] = useState<BannerPayload | null>(null);
+
+  useAuthGate();
+
+  // --- auth session ------------------------------------------------------
+  useEffect(() => {
+    // Env validation and the outbox sender registration both happen at module
+    // scope — env.ts logs missing config on import, and ChatEngine calls
+    // registerSender when it is first imported (which the import above does).
+    void hydrateSmartReply();
+    void Notifications.ensureChannels();
+
+    let sessionTeardown: Array<() => void> = [];
+    let activeUid: string | null = null;
+
+    const teardownSession = () => {
+      for (const off of sessionTeardown) {
+        try {
+          off();
+        } catch {
+          /* a failed unsubscribe must not block the rest */
+        }
+      }
+      sessionTeardown = [];
+
+      if (activeUid) {
+        stopPresence();
+        stopOutbox();
+        Notifications.stop();
+        CallManager.detach();
+      }
+      activeUid = null;
+    };
+
+    const offAuth = Auth.onAuthChanged(async (user) => {
+      if (!user) {
+        teardownSession();
+        appState.get().reset();
+        await SplashScreen.hideAsync().catch(() => {});
+        return;
+      }
+
+      // Re-firing for the same uid (a token refresh) must not double-subscribe.
+      if (activeUid === user.uid) return;
+      teardownSession();
+      activeUid = user.uid;
+
+      try {
+        await Auth.upsertProfile(user);
+      } catch (e) {
+        console.warn('[Flyer/boot] profile upsert failed', e);
+      }
+
+      // Own profile: drives the header, and privacy settings the whole UI reads.
+      const offMe = onValue(Paths.user(user.uid), (snap) => {
+        const profile = snap.val() as UserProfile | null;
+        if (profile) {
+          appState.get().setCurrentUser({ ...profile, uid: user.uid });
+        }
+        appState.get().setAuthReady(true);
+      });
+
+      const offChats = listenToChats(user.uid);
+      const offBlocks = listenToBlocks(user.uid);
+      const offSelf = listenToUser(user.uid);
+
+      startPresence(user.uid);
+      startOutbox();
+      CallManager.attach(user.uid);
+      void Notifications.start(user.uid);
+
+      sessionTeardown = [offMe, offChats, offBlocks, offSelf];
+
+      await SplashScreen.hideAsync().catch(() => {});
+    });
+
+    return () => {
+      offAuth();
+      teardownSession();
+    };
+  }, []);
+
+  // --- foreground notification plumbing ----------------------------------
+  useEffect(() => {
+    Notifications.setNavigator((path) => {
+      // The notification can land before the router is ready on a cold start;
+      // NotificationManager already defers the initial one, and replace() here
+      // is safe for the rest.
+      try {
+        router.push(path as never);
+      } catch (e) {
+        console.warn('[Flyer/nav] deferred navigation failed', e);
+      }
+    });
+    Notifications.setBannerHandler((payload) => setBanner(payload));
+  }, []);
+
+  const openBanner = useCallback(() => {
+    const chatId = banner?.chatId;
+    setBanner(null);
+    if (chatId) router.push(`/chat/${chatId}`);
+  }, [banner?.chatId]);
+
+  if (!authReady) {
+    return (
+      <View style={[styles.boot, { backgroundColor: theme.colors.bg }]}>
+        <ActivityIndicator size="large" color={theme.colors.accent} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.root, { backgroundColor: theme.colors.bg }]}>
+      <StatusBar style={theme.dark ? 'light' : 'dark'} />
+
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: theme.colors.bg },
+          animation: 'slide_from_right',
+        }}
+      >
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="login" options={{ animation: 'fade' }} />
+        <Stack.Screen name="chat/[chatId]" />
+        <Stack.Screen name="user/[uid]" />
+        <Stack.Screen name="contacts" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="forward" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="profile" />
+        <Stack.Screen name="settings" />
+        <Stack.Screen name="starred" />
+        {/* Full-screen and gesture-free: a swipe-back mid-call would leave the
+            peer connection alive behind the chat list. */}
+        <Stack.Screen
+          name="call"
+          options={{ animation: 'fade', gestureEnabled: false, presentation: 'fullScreenModal' }}
+        />
+      </Stack>
+
+      <NetworkBanner />
+      <CallOverlay />
+      <Banner banner={banner} onPress={openBanner} onDismiss={() => setBanner(null)} />
+    </View>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <GestureHandlerRootView style={styles.root}>
+      <SafeAreaProvider>
+        <ThemeProvider>
+          <RootNavigator />
+        </ThemeProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1 },
+  boot: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+});

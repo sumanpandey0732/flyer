@@ -121,7 +121,7 @@ export async function flush(): Promise<void> {
           // rather than dropping their message on the floor.
           await dequeue(item.id);
           appState.get().upsertMessage(item.chatId, {
-            ...(item.draft as never),
+            ...item.draft,
             id: item.id,
             chatId: item.chatId,
             timestamp: item.queuedAt,

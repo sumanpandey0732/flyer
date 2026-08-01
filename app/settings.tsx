@@ -195,7 +195,7 @@ export default function SettingsScreen() {
             />
           }
         />
-        <Caption text="When on, your recent messages in a chat are sent to Mistral AI to generate reply suggestions. Off by default." />
+        <Caption text="When on, your recent messages in a chat are sent to  AI to generate reply suggestions. Off by default." />
 
         <SectionHeader label="Notifications" />
         <ListRow
@@ -220,7 +220,7 @@ export default function SettingsScreen() {
         <ListRow
           icon="privacy"
           title="Media storage"
-          subtitle="Photos, videos and voice notes you send are stored on Cloudinary."
+          subtitle="Photos, videos and voice notes you send are stored on Cloud."
         />
       </ScrollView>
     </View>
