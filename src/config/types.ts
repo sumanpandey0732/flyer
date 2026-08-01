@@ -88,6 +88,13 @@ export interface ChatSummary {
   /** uid -> timestamp before which messages are hidden for that user only. */
   clearedAt: Record<string, number>;
   unread: Record<string, number>;
+  /**
+   * Per-user flags mirrored from `userChats/{myUid}/{chatId}`, not from the
+   * shared chat node — only the signed-in user's own values are ever readable,
+   * so these describe *me*, not the conversation.
+   */
+  pinned: boolean;
+  archived: boolean;
 }
 
 export interface CallRecord {

@@ -313,7 +313,7 @@ class CallManagerImpl {
       const offer = await readOnce<{ type: string; sdp: string }>(Paths.callOffer(callId));
       if (!offer) throw new Error('No offer present for this call');
 
-      await this.rtc!.setRemoteDescription(offer as RTCSessionDescriptionInit);
+      await this.rtc!.setRemoteDescription(offer);
 
       const answer = await this.rtc!.createAnswer();
       await write(Paths.callAnswer(callId), { type: answer.type, sdp: answer.sdp });
@@ -410,7 +410,7 @@ class CallManagerImpl {
       const answer = snap.val() as { type: string; sdp: string } | null;
       if (!answer || !this.rtc) return;
       try {
-        await this.rtc.setRemoteDescription(answer as RTCSessionDescriptionInit);
+        await this.rtc.setRemoteDescription(answer);
         this.clearRingTimeout();
       } catch (e) {
         console.warn('[Flyer/call] failed to apply answer', e);

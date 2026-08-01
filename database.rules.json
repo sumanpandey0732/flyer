@@ -96,7 +96,7 @@
         "mutedBy": {
           "$uid": {
             ".write": "auth != null && auth.uid === $uid && root.child('chats').child($chatId).child('participants').child(auth.uid).exists()",
-            ".validate": "newData.isNumber() && newData.val() >= 0"
+            ".validate": "newData.isNumber() && (newData.val() >= 0 || newData.val() === -1)"
           }
         },
 
@@ -119,6 +119,8 @@
           ".write": "auth != null && $chatId.contains($uid) && (auth.uid === $uid || $chatId.contains(auth.uid))",
           ".validate": "newData.hasChild('lastTimestamp')",
           "lastTimestamp": { ".validate": "newData.isNumber() && newData.val() > 0" },
+          "pinned": { ".validate": "newData.isBoolean()" },
+          "archived": { ".validate": "newData.isBoolean()" },
           "$other": { ".validate": false }
         }
       }

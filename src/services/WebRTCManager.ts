@@ -14,6 +14,39 @@ import { Ice, Limits } from '@/src/config/env';
 // code paths inside react-native-webrtc expect.
 registerGlobals();
 
+/**
+ * react-native-webrtc's own `RTCSessionDescriptionInit` (sdp is required, type
+ * is a plain string) is not re-exported from the package index, and it is NOT
+ * interchangeable with the DOM's identically-named type that lib.dom pulls in
+ * via expo/tsconfig.base — there `sdp` is optional. Declaring it locally keeps
+ * the two apart instead of casting at every call site.
+ */
+export interface SdpInit {
+  type: string;
+  sdp: string;
+}
+
+/**
+ * Audio processing constraints. libwebrtc honours all three (Android forwards
+ * every key straight through as a mandatory MediaConstraint, iOS the same), but
+ * the library's `MediaTrackConstraints` only declares the video-shaped fields,
+ * so the object needs a type of its own to survive getUserMedia's signature.
+ */
+const AUDIO_CONSTRAINTS = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+};
+
+/**
+ * Derived from the public API surface rather than imported from
+ * `react-native-webrtc/lib/typescript/...`, since the constraint types are not
+ * re-exported from the package index and a deep import would break on any
+ * internal reshuffle.
+ */
+type UserMediaConstraints = NonNullable<Parameters<typeof mediaDevices.getUserMedia>[0]>;
+type AudioConstraints = UserMediaConstraints['audio'];
+
 export type ConnectionPhase =
   | 'new'
   | 'connecting'
@@ -67,12 +100,8 @@ export class WebRTCManager {
   // --- setup -------------------------------------------------------------
 
   async initialize(): Promise<MediaStream> {
-    const stream = (await mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
+    const stream = await mediaDevices.getUserMedia({
+      audio: AUDIO_CONSTRAINTS as AudioConstraints,
       video: this.isVideo
         ? {
             width: { min: 480, ideal: 1280 },
@@ -81,7 +110,7 @@ export class WebRTCManager {
             facingMode: 'user',
           }
         : false,
-    })) as MediaStream;
+    });
 
     this.localStream = stream;
     this.cb.onLocalStream(stream);
@@ -172,7 +201,7 @@ export class WebRTCManager {
     return answer as RTCSessionDescription;
   }
 
-  async setRemoteDescription(description: RTCSessionDescriptionInit): Promise<void> {
+  async setRemoteDescription(description: SdpInit): Promise<void> {
     const pc = this.requirePc();
 
     // Glare handling: if both sides offered simultaneously, the "polite" peer
@@ -185,7 +214,8 @@ export class WebRTCManager {
         console.warn('[Flyer/rtc] ignoring colliding offer (impolite peer)');
         return;
       }
-      await pc.setLocalDescription({ type: 'rollback' } as RTCSessionDescriptionInit);
+      // A rollback carries no SDP, but the library's type requires the field.
+      await pc.setLocalDescription({ type: 'rollback', sdp: '' });
     }
 
     await pc.setRemoteDescription(new RTCSessionDescription(description));

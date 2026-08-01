@@ -69,7 +69,17 @@ function normaliseMessage(id: string, chatId: string, raw: Record<string, unknow
   };
 }
 
-function normaliseChat(id: string, raw: Record<string, unknown>): ChatSummary {
+/** Per-user flags from `userChats/{uid}/{chatId}`, merged in by listenToChats. */
+interface UserChatFlags {
+  pinned: boolean;
+  archived: boolean;
+}
+
+function normaliseChat(
+  id: string,
+  raw: Record<string, unknown>,
+  flags: UserChatFlags
+): ChatSummary {
   return {
     id,
     participants: (raw.participants as Record<string, boolean>) ?? {},
@@ -78,6 +88,8 @@ function normaliseChat(id: string, raw: Record<string, unknown>): ChatSummary {
     mutedBy: (raw.mutedBy as Record<string, number>) ?? {},
     clearedAt: (raw.clearedAt as Record<string, number>) ?? {},
     unread: (raw.unread as Record<string, number>) ?? {},
+    pinned: flags.pinned,
+    archived: flags.archived,
   };
 }
 
@@ -105,28 +117,54 @@ export function previewFor(type: MessageType, text: string | null): string {
  */
 export function listenToChats(uid: string): Unsubscribe {
   const perChat = new Map<string, Unsubscribe>();
+  // Latest flags per chat, so a chat-node update can re-emit without waiting
+  // for the index to fire again (and vice versa).
+  const flags = new Map<string, UserChatFlags>();
+  const latest = new Map<string, Record<string, unknown>>();
+
+  const emit = (chatId: string) => {
+    const raw = latest.get(chatId);
+    if (!raw) return;
+    const f = flags.get(chatId) ?? { pinned: false, archived: false };
+    appState.get().upsertChat(normaliseChat(chatId, raw, f));
+  };
 
   const offIndex = onValue(Paths.userChats(uid), (snap) => {
-    const index = (snap.val() as Record<string, unknown> | null) ?? {};
+    const index = (snap.val() as Record<string, Record<string, unknown>> | null) ?? {};
     const ids = new Set(Object.keys(index));
 
     for (const [chatId, off] of perChat) {
       if (!ids.has(chatId)) {
         off();
         perChat.delete(chatId);
+        flags.delete(chatId);
+        latest.delete(chatId);
         appState.get().removeChat(chatId);
       }
     }
 
     for (const chatId of ids) {
-      if (perChat.has(chatId)) continue;
+      const entry = index[chatId] ?? {};
+      flags.set(chatId, {
+        pinned: entry.pinned === true,
+        archived: entry.archived === true,
+      });
+
+      if (perChat.has(chatId)) {
+        // Already subscribed — the index fired because a flag changed.
+        emit(chatId);
+        continue;
+      }
+
       const off = onValue(Paths.chat(chatId), (chatSnap) => {
         const raw = chatSnap.val() as Record<string, unknown> | null;
         if (!raw) {
+          latest.delete(chatId);
           appState.get().removeChat(chatId);
           return;
         }
-        appState.get().upsertChat(normaliseChat(chatId, raw));
+        latest.set(chatId, raw);
+        emit(chatId);
       });
       perChat.set(chatId, off);
     }
@@ -136,6 +174,8 @@ export function listenToChats(uid: string): Unsubscribe {
     offIndex();
     for (const off of perChat.values()) off();
     perChat.clear();
+    flags.clear();
+    latest.clear();
   };
 }
 
@@ -289,8 +329,10 @@ async function commitMessage(opts: SendOptions, messageId: string): Promise<void
       deleted: false,
     },
     [`${Paths.chat(chatId)}/lastTimestamp`]: serverTimestamp(),
-    [Paths.userChat(senderId, chatId)]: { lastTimestamp: serverTimestamp() },
-    [Paths.userChat(peerId, chatId)]: { lastTimestamp: serverTimestamp() },
+    // Leaf writes, not `{lastTimestamp}` objects: setting the parent would
+    // replace the node and wipe the owner's `pinned`/`archived` flags.
+    [`${Paths.userChat(senderId, chatId)}/lastTimestamp`]: serverTimestamp(),
+    [`${Paths.userChat(peerId, chatId)}/lastTimestamp`]: serverTimestamp(),
   });
 
   // Separate transaction: a fan-out cannot express "increment" atomically.
@@ -637,6 +679,28 @@ export async function setChatMuted(
   until: number | null
 ): Promise<void> {
   await write(Paths.muted(chatId, uid), until ?? 0);
+}
+
+/**
+ * Pin and archive write to the caller's own `userChats` index, so they are
+ * invisible to the peer and survive independently of the shared chat node.
+ * Both write `false` rather than removing the key, because the index entry's
+ * `.validate` requires `lastTimestamp` to remain present.
+ */
+export async function setChatPinned(
+  uid: string,
+  chatId: string,
+  pinned: boolean
+): Promise<void> {
+  await write(Paths.pinned(uid, chatId), pinned);
+}
+
+export async function setChatArchived(
+  uid: string,
+  chatId: string,
+  archived: boolean
+): Promise<void> {
+  await write(Paths.archived(uid, chatId), archived);
 }
 
 export function isChatMuted(chat: ChatSummary | undefined, uid: string): boolean {

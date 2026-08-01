@@ -47,6 +47,12 @@ export const Paths = {
   muted: (chatId: string, uid: string) => `chats/${chatId}/mutedBy/${uid}`,
   clearedAt: (chatId: string, uid: string) => `chats/${chatId}/clearedAt/${uid}`,
 
+  // Pin and archive are personal preferences, not shared chat state: they live
+  // under the owner's private userChats index so a peer can neither read nor
+  // change them. (chats/$chatId seals unknown children with $other:false.)
+  pinned: (uid: string, chatId: string) => `userChats/${uid}/${chatId}/pinned`,
+  archived: (uid: string, chatId: string) => `userChats/${uid}/${chatId}/archived`,
+
   messages: (chatId: string) => `messages/${chatId}`,
   message: (chatId: string, messageId: string) => `messages/${chatId}/${messageId}`,
   reaction: (chatId: string, messageId: string, uid: string) =>
@@ -98,7 +104,8 @@ export function onValue(
     'value',
     (snap) => cb(snap),
     (err) => {
-      console.warn('[Flyer/rtdb] listener error', typeof path === 'string' ? path : r.key, err);
+      // A Query has no `.key` of its own — go through `.ref` for the label.
+      console.warn('[Flyer/rtdb] listener error', typeof path === 'string' ? path : r.ref.key, err);
       onError?.(err as Error);
     }
   );
