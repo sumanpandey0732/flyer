@@ -64,6 +64,7 @@ function normaliseMessage(id: string, chatId: string, raw: Record<string, unknow
     edited: Boolean(raw.edited),
     deleted: Boolean(raw.deleted),
     reactions: (raw.reactions as Record<string, string>) ?? {},
+    hiddenFor: (raw.hiddenFor as Record<string, boolean>) ?? {},
     replyTo: (raw.replyTo as ReplyRef | null) ?? null,
     forwardedFrom: (raw.forwardedFrom as string | null) ?? null,
   };
@@ -368,6 +369,7 @@ export async function sendText(
         edited: false,
         deleted: false,
         reactions: {},
+        hiddenFor: {},
         replyTo,
         forwardedFrom: null,
       },
@@ -415,6 +417,7 @@ export async function sendMedia(
     edited: false,
     deleted: false,
     reactions: {},
+    hiddenFor: {},
     replyTo,
     forwardedFrom: null,
   };

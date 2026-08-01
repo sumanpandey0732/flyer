@@ -4,6 +4,8 @@ import type {
   CallState,
   CallType,
   ChatSummary,
+  Contact,
+  ContactRequest,
   Message,
   UserProfile,
 } from '@/src/config/types';
@@ -90,6 +92,9 @@ interface AppState {
 
   setThemeMode: (m: 'system' | 'light' | 'dark') => void;
   setBlocked: (map: Record<string, boolean>) => void;
+
+  setContacts: (list: Contact[]) => void;
+  setRequests: (list: ContactRequest[]) => void;
 
   reset: () => void;
 }

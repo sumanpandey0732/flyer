@@ -350,27 +350,47 @@
       }
     },
 
-    "status": {
+    "contacts": {
       "$uid": {
-        ".read": "auth != null",
+        ".read": "auth != null && auth.uid === $uid",
+        ".indexOn": ["addedAt"],
+        "$contactUid": {
+          "//": "Two legitimate writers. (a) The owner: may always remove, but may only add when a request from that person is pending — so nobody can silently insert themselves into your list. (b) The person being added, writing the reciprocal entry into the requester's list while accepting. `root` is the pre-write state, so the still-unaccepted request is visible to both halves of the atomic accept.",
+          ".write": "auth != null && $contactUid !== $uid && ((auth.uid === $uid && (!newData.exists() || root.child('contactRequests').child($uid).child($contactUid).exists())) || (auth.uid === $contactUid && newData.exists() && root.child('contactRequests').child($contactUid).child($uid).exists()))",
+          ".validate": "newData.hasChildren(['uid', 'addedAt'])",
+          "uid": { ".validate": "newData.isString() && newData.val() === $contactUid" },
+          "addedAt": { ".validate": "newData.isNumber() && newData.val() > 0" },
+          "$other": { ".validate": false }
+        }
+      }
+    },
+
+    "contactRequests": {
+      "$uid": {
+        "//": "The recipient's inbox. Only they can read it; the sender tracks their own pending requests in `sentRequests` instead.",
+        ".read": "auth != null && auth.uid === $uid",
         ".indexOn": ["createdAt"],
-        "$statusId": {
-          ".write": "auth != null && auth.uid === $uid && !newData.hasChild('viewers')",
-          ".validate": "newData.hasChildren(['type', 'createdAt', 'expiresAt'])",
-          "type": { ".validate": "newData.isString() && newData.val().matches(/^(image|text)$/)" },
-          "mediaUrl": { ".validate": "newData.isString() && newData.val().length <= 2048" },
-          "text": { ".validate": "newData.isString() && newData.val().length <= 700" },
-          "background": { ".validate": "newData.isString() && newData.val().length <= 32" },
-          "createdAt": { ".validate": "newData.isNumber() && (!data.exists() || data.val() === newData.val())" },
-          "expiresAt": {
-            ".validate": "newData.isNumber() && newData.val() > newData.parent().child('createdAt').val() && newData.val() <= newData.parent().child('createdAt').val() + 86400000"
-          },
-          "viewers": {
-            "$viewerId": {
-              ".write": "auth != null && auth.uid === $viewerId && root.child('status').child($uid).child($statusId).exists()",
-              ".validate": "newData.isNumber() && newData.val() > 0 && $viewerId === auth.uid"
-            }
-          },
+        "$fromUid": {
+          "//": "The sender may create one (unless blocked, already a contact, or one already exists) and may cancel it. The recipient may only delete — accepting and declining are both deletions, and which one it was is decided by whether contacts entries are written in the same fan-out.",
+          ".write": "auth != null && $fromUid !== $uid && ((auth.uid === $fromUid && (!newData.exists() || (!data.exists() && !root.child('blocks').child($uid).child($fromUid).exists() && !root.child('blocks').child($fromUid).child($uid).exists() && !root.child('contacts').child($uid).child($fromUid).exists()))) || (auth.uid === $uid && !newData.exists()))",
+          ".validate": "newData.hasChildren(['uid', 'createdAt'])",
+          "uid": { ".validate": "newData.isString() && newData.val() === $fromUid" },
+          "createdAt": { ".validate": "newData.isNumber() && newData.val() > 0" },
+          "$other": { ".validate": false }
+        }
+      }
+    },
+
+    "sentRequests": {
+      "$uid": {
+        "//": "The sender's outbox, mirroring `contactRequests`. The recipient needs delete rights here so that accepting or declining clears the sender's pending state in the same atomic write.",
+        ".read": "auth != null && auth.uid === $uid",
+        ".indexOn": ["createdAt"],
+        "$toUid": {
+          ".write": "auth != null && $toUid !== $uid && (auth.uid === $uid || (auth.uid === $toUid && !newData.exists()))",
+          ".validate": "newData.hasChildren(['uid', 'createdAt'])",
+          "uid": { ".validate": "newData.isString() && newData.val() === $toUid" },
+          "createdAt": { ".validate": "newData.isNumber() && newData.val() > 0" },
           "$other": { ".validate": false }
         }
       }
