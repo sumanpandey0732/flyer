@@ -125,6 +125,15 @@ function ChatListItemImpl({ chat, peer, myUid, muted, onPress, onLongPress }: Pr
         </Text>
 
         <View style={styles.rightBottom}>
+          {chat.pinned ? (
+            <Icon
+              name="pin"
+              size={14}
+              color={theme.colors.textFaint}
+              style={styles.pinIcon}
+            />
+          ) : null}
+
           {muted ? (
             <Icon
               name="mute"
@@ -155,6 +164,8 @@ export const ChatListItem = memo(ChatListItemImpl, (prev, next) => {
     prev.chat.lastMessage?.deleted === next.chat.lastMessage?.deleted &&
     prev.chat.lastMessage?.senderId === next.chat.lastMessage?.senderId &&
     prev.chat.unread?.[prev.myUid] === next.chat.unread?.[next.myUid] &&
+    prev.chat.pinned === next.chat.pinned &&
+    prev.chat.archived === next.chat.archived &&
     prev.muted === next.muted &&
     prev.myUid === next.myUid &&
     prev.peer?.name === next.peer?.name &&
@@ -186,6 +197,7 @@ const styles = StyleSheet.create({
   time: { fontSize: 12 },
   rightBottom: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6, minHeight: 20 },
   muteIcon: { opacity: 0.9 },
+  pinIcon: { opacity: 0.9, transform: [{ rotate: '45deg' }] },
   badge: {
     minWidth: 20,
     height: 20,

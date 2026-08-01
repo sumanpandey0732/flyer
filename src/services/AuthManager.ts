@@ -159,7 +159,9 @@ export async function deleteAccount(uid: string): Promise<void> {
     [Paths.starred(uid)]: null,
     [Paths.blocks(uid)]: null,
     [Paths.callHistory(uid)]: null,
-    [Paths.status(uid)]: null,
+    [Paths.contacts(uid)]: null,
+    [Paths.requests(uid)]: null,
+    [Paths.sentRequests(uid)]: null,
   });
   await auth().currentUser?.delete();
 }

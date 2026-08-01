@@ -57,7 +57,9 @@ export const lightTheme: Theme = {
     bgElevated: '#FFFFFF',
     surface: '#F7F8FA',
     surfaceAlt: '#EDEFF2',
-    header: '#008069',
+    // White, not green: the light palette is white / light gray / green *accent*,
+    // and `text` is near-black — on a green header that pairing fails contrast.
+    header: '#FFFFFF',
     border: '#E4E6EA',
     text: '#0B141A',
     textMuted: '#5E6B73',
@@ -144,12 +146,3 @@ export function initialsOf(name: string): string {
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
-
-export const STATUS_BACKGROUNDS = [
-  '#0B7285',
-  '#7048E8',
-  '#C2255C',
-  '#E8590C',
-  '#2B8A3E',
-  '#495057',
-];

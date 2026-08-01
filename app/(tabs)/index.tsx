@@ -9,15 +9,23 @@ import { ChatListItem } from '@/src/components/ChatListItem';
 import { SearchBar } from '@/src/components/SearchBar';
 import { EmptyState } from '@/src/components/EmptyState';
 import { alertError, confirm } from '@/src/components/Confirm';
-import { selectSortedChats, useAppStore } from '@/src/services/StateManager';
+import { SwipeableChatRow } from '@/src/components/SwipeableChatRow';
+import {
+  selectArchivedUnread,
+  selectSortedChats,
+  useAppStore,
+} from '@/src/services/StateManager';
 import {
   clearChat,
   deleteChatForMe,
   isChatMuted,
   listenToUser,
+  markChatRead,
   peerOf,
   searchChats,
+  setChatArchived,
   setChatMuted,
+  setChatPinned,
 } from '@/src/services/ChatEngine';
 import type { ChatSummary } from '@/src/config/types';
 import { ActionSheet, type SheetAction } from '@/src/components/ActionSheet';
@@ -32,6 +40,10 @@ export default function ChatsScreen() {
   const myUid = useAppStore((s) => s.currentUser?.uid ?? null);
   const chats = useAppStore(selectSortedChats);
   const users = useAppStore((s) => s.users);
+  const archivedCount = useAppStore(
+    (s) => Object.values(s.chats).filter((c) => c.archived).length
+  );
+  const archivedUnread = useAppStore(selectArchivedUnread);
 
   const [searching, setSearching] = useState(false);
   const [term, setTerm] = useState('');
@@ -89,12 +101,69 @@ export default function ChatsScreen() {
     setTerm('');
   }, []);
 
+  const togglePin = useCallback(
+    async (chat: ChatSummary) => {
+      if (!myUid) return;
+      try {
+        await setChatPinned(myUid, chat.id, !chat.pinned);
+      } catch (e) {
+        alertError('Could not update the pin', String(e));
+      }
+    },
+    [myUid]
+  );
+
+  const archive = useCallback(
+    async (chat: ChatSummary) => {
+      if (!myUid) return;
+      try {
+        // Archiving a pinned chat clears the pin, otherwise it would come back
+        // pinned to the top of the main list on unarchive.
+        if (chat.pinned) await setChatPinned(myUid, chat.id, false);
+        await setChatArchived(myUid, chat.id, true);
+      } catch (e) {
+        alertError('Could not archive the chat', String(e));
+      }
+    },
+    [myUid]
+  );
+
   const chatActions = useMemo<SheetAction[]>(() => {
     if (!menuFor || !myUid) return [];
     const muted = isChatMuted(menuFor, myUid);
     const chatId = menuFor.id;
+    const chat = menuFor;
+    const unread = chat.unread?.[myUid] ?? 0;
 
     return [
+      {
+        key: 'pin',
+        label: chat.pinned ? 'Unpin chat' : 'Pin chat',
+        icon: chat.pinned ? 'unpin' : 'pin',
+        onPress: () => togglePin(chat),
+      },
+      {
+        key: 'archive',
+        label: 'Archive chat',
+        icon: 'archive',
+        onPress: () => archive(chat),
+      },
+      ...(unread > 0
+        ? [
+            {
+              key: 'read',
+              label: 'Mark as read',
+              icon: 'doubleCheck' as const,
+              onPress: async () => {
+                try {
+                  await markChatRead(chatId, myUid);
+                } catch (e) {
+                  alertError('Could not mark as read', String(e));
+                }
+              },
+            },
+          ]
+        : []),
       {
         key: 'mute',
         label: muted ? 'Unmute notifications' : 'Mute for 8 hours',
@@ -147,7 +216,7 @@ export default function ChatsScreen() {
         },
       },
     ];
-  }, [menuFor, myUid]);
+  }, [menuFor, myUid, togglePin, archive]);
 
   const overflowActions = useMemo<SheetAction[]>(
     () => [
@@ -225,17 +294,55 @@ export default function ChatsScreen() {
             colors={[theme.colors.accent]}
           />
         }
+        ListHeaderComponent={
+          // Only when there is something in there and we are not searching —
+          // a permanent empty "Archived" row is just noise.
+          archivedCount > 0 && term.length === 0 ? (
+            <Pressable
+              style={[styles.archivedRow, { borderBottomColor: theme.colors.border }]}
+              onPress={() => router.push('/archived')}
+              accessibilityRole="button"
+              accessibilityLabel={`Archived, ${archivedCount} chats`}
+            >
+              <Icon name="archive" size={22} color={theme.colors.textMuted} />
+              <Text style={[styles.archivedLabel, { color: theme.colors.text }]}>Archived</Text>
+              {archivedUnread > 0 ? (
+                <Text style={[styles.archivedCount, { color: theme.colors.accent }]}>
+                  {archivedUnread}
+                </Text>
+              ) : null}
+            </Pressable>
+          ) : null
+        }
         renderItem={({ item }) => {
           const peerUid = peerOf(item, myUid);
           return (
-            <ChatListItem
-              chat={item}
-              peer={peerUid ? (users[peerUid] ?? null) : null}
-              myUid={myUid}
-              muted={isChatMuted(item, myUid)}
-              onPress={() => router.push(`/chat/${item.id}`)}
-              onLongPress={() => setMenuFor(item)}
-            />
+            <SwipeableChatRow
+              // Swiping while filtering would reorder the result set underneath
+              // the finger, so it is disabled during search.
+              enabled={term.length === 0}
+              right={{
+                icon: item.pinned ? 'unpin' : 'pin',
+                label: item.pinned ? 'Unpin' : 'Pin',
+                color: theme.colors.accent,
+                onTrigger: () => void togglePin(item),
+              }}
+              left={{
+                icon: 'archive',
+                label: 'Archive',
+                color: theme.colors.textMuted,
+                onTrigger: () => void archive(item),
+              }}
+            >
+              <ChatListItem
+                chat={item}
+                peer={peerUid ? (users[peerUid] ?? null) : null}
+                myUid={myUid}
+                muted={isChatMuted(item, myUid)}
+                onPress={() => router.push(`/chat/${item.id}`)}
+                onLongPress={() => setMenuFor(item)}
+              />
+            </SwipeableChatRow>
           );
         }}
         ListEmptyComponent={
@@ -299,6 +406,16 @@ const styles = StyleSheet.create({
   title: { fontSize: 22, fontWeight: '700' },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   emptyContainer: { flexGrow: 1, justifyContent: 'center' },
+  archivedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    paddingHorizontal: 18,
+    minHeight: 56,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  archivedLabel: { flex: 1, fontSize: 16 },
+  archivedCount: { fontSize: 13, fontWeight: '700' },
   fab: {
     position: 'absolute',
     right: 20,

@@ -46,8 +46,6 @@ export const Limits = {
   reconnectGraceMs: 12_000,
   /** Messages fetched per chat window. */
   messagePageSize: 40,
-  /** Status/story lifetime. */
-  statusTtlMs: 24 * 60 * 60 * 1000,
   imageMaxDimension: 1600,
   imageQuality: 0.7,
 } as const;

@@ -65,6 +65,12 @@ export interface Message {
   edited: boolean;
   deleted: boolean;
   reactions: Record<string, string>;
+  /**
+   * uids who deleted this message for themselves only. Filtered client-side —
+   * the message still exists for everyone else, so it cannot be removed
+   * server-side the way "delete for everyone" is.
+   */
+  hiddenFor: Record<string, boolean>;
   replyTo: ReplyRef | null;
   forwardedFrom: string | null;
   /** Client-only: set for messages sitting in the offline queue. */
@@ -120,16 +126,22 @@ export interface CallHistoryEntry {
   missed: boolean;
 }
 
-export interface StatusPost {
-  id: string;
+/** An accepted, mutual contact. Stored under `contacts/{myUid}/{uid}`. */
+export interface Contact {
   uid: string;
-  type: 'image' | 'text';
-  mediaUrl: string | null;
-  text: string | null;
-  background: string | null;
+  addedAt: number;
+}
+
+/**
+ * A pending contact request. The same shape is stored twice — under the
+ * recipient's `contactRequests` (so they can see and answer it) and the
+ * sender's `sentRequests` (so they can see it is pending and cancel it).
+ */
+export interface ContactRequest {
+  /** The other party: sender for incoming, recipient for outgoing. */
+  uid: string;
   createdAt: number;
-  expiresAt: number;
-  viewers: Record<string, number>;
+  direction: 'incoming' | 'outgoing';
 }
 
 export interface StarredRef {

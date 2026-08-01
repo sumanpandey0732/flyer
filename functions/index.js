@@ -8,7 +8,7 @@
  *   - Notifying message recipients while their app is backgrounded or killed.
  *   - Writing call history (both participants must get an entry, but neither
  *     client can write into the other's tree — see database.rules.json).
- *   - Reaping calls whose caller vanished and status posts past their TTL.
+ *   - Reaping calls whose caller vanished.
  *
  * Everything here runs with the Admin SDK, which bypasses database rules. That
  * is deliberate: `callHistory` is client-read-only and `incoming/{uid}` is
@@ -493,29 +493,12 @@ async function reapCalls(db, now) {
   return applyInChunks(db, updates);
 }
 
-/** Status posts past their 24h TTL. */
-async function reapStatus(db, now) {
-  const snap = await db.ref('status').once('value');
-  const updates = {};
-
-  snap.forEach((userSnap) => {
-    userSnap.forEach((postSnap) => {
-      const post = postSnap.val();
-      const expiresAt = Number(post && post.expiresAt);
-      if (Number.isFinite(expiresAt) && expiresAt > now) return;
-      updates[`status/${userSnap.key}/${postSnap.key}`] = null;
-    });
-  });
-
-  return applyInChunks(db, updates);
-}
-
 exports.reapStaleCalls = onSchedule('every 5 minutes', async () => {
   const db = getDatabase();
   const now = Date.now();
 
-  const [calls, statuses] = await Promise.all([reapCalls(db, now), reapStatus(db, now)]);
-  logger.info('Reaper finished', { staleCallUpdates: calls, expiredStatuses: statuses });
+  const calls = await reapCalls(db, now);
+  logger.info('Reaper finished', { staleCallUpdates: calls });
 });
 
 /* ------------------------------------------------------------------ *

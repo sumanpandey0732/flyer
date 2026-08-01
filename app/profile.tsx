@@ -133,7 +133,7 @@ export default function ProfileScreen() {
     const first = await confirm({
       title: 'Delete your account?',
       message:
-        'This removes your profile, starred messages, status posts and call history. ' +
+        'This removes your profile, contacts, starred messages and call history. ' +
         'Messages you have already sent stay in other people’s chats.',
       confirmLabel: 'Continue',
       destructive: true,

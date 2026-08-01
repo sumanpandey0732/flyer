@@ -193,6 +193,7 @@ function RootNavigator() {
         <Stack.Screen name="profile" />
         <Stack.Screen name="settings" />
         <Stack.Screen name="starred" />
+        <Stack.Screen name="archived" />
         {/* Full-screen and gesture-free: a swipe-back mid-call would leave the
             peer connection alive behind the chat list. */}
         <Stack.Screen

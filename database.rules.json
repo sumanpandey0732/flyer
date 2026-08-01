@@ -193,6 +193,13 @@
             }
           },
 
+          "hiddenFor": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && root.child('chats').child($chatId).child('participants').child(auth.uid).exists()",
+              ".validate": "newData.isBoolean() && $uid === auth.uid"
+            }
+          },
+
           "$other": { ".validate": false }
         }
       }

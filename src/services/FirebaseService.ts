@@ -80,9 +80,13 @@ export const Paths = {
   callHistory: (uid: string) => `callHistory/${uid}`,
   callHistoryItem: (uid: string, callId: string) => `callHistory/${uid}/${callId}`,
 
-  status: (uid: string) => `status/${uid}`,
-  statusItem: (uid: string, statusId: string) => `status/${uid}/${statusId}`,
-  allStatus: () => 'status',
+  // Contacts are mutual once accepted; requests are one-directional until then.
+  contacts: (uid: string) => `contacts/${uid}`,
+  contact: (uid: string, contactUid: string) => `contacts/${uid}/${contactUid}`,
+  requests: (uid: string) => `contactRequests/${uid}`,
+  request: (uid: string, fromUid: string) => `contactRequests/${uid}/${fromUid}`,
+  sentRequests: (uid: string) => `sentRequests/${uid}`,
+  sentRequest: (uid: string, toUid: string) => `sentRequests/${uid}/${toUid}`,
 
   connected: () => '.info/connected',
 } as const;

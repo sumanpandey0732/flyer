@@ -33,6 +33,11 @@ const ICONS = {
   privacy: ['material', 'lock-outline'],
   logout: ['material', 'logout'],
   people: ['material', 'people'],
+  chats: ['material', 'chat'],
+  chatsOutline: ['material', 'chat-bubble-outline'],
+  status: ['community', 'circle-slice-8'],
+  statusOutline: ['community', 'circle-outline'],
+  phoneOutline: ['material', 'phone-in-talk'],
   warning: ['material', 'error-outline'],
 
   // composer
@@ -68,6 +73,11 @@ const ICONS = {
   copy: ['material', 'content-copy'],
   trash: ['material', 'delete-outline'],
   edit: ['material', 'edit'],
+  pin: ['material', 'push-pin'],
+  unpin: ['community', 'pin-off'],
+  archive: ['material', 'archive'],
+  unarchive: ['material', 'unarchive'],
+  bluetooth: ['material', 'bluetooth-audio'],
   mute: ['material', 'notifications-off'],
   unmute: ['material', 'notifications-none'],
   block: ['material', 'block'],

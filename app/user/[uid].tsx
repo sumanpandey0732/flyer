@@ -124,7 +124,7 @@ export default function UserProfileScreen() {
       title: isBlocked ? `Unblock ${peer.name}?` : `Block ${peer.name}?`,
       message: isBlocked
         ? 'They will be able to message and call you again.'
-        : 'Blocked people cannot message or call you, and you will not see their status updates.',
+        : 'Blocked people cannot message you, call you, or send you a contact request.',
       confirmLabel: isBlocked ? 'Unblock' : 'Block',
       destructive: !isBlocked,
     });

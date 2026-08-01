@@ -8,16 +8,21 @@ import { selectTotalUnread, useAppStore } from '@/src/services/StateManager';
 import { Icon, type IconName } from '@/src/components/Icon';
 import { Pressable } from '@/src/components/Pressable';
 
-const TAB_ICONS: Record<string, IconName> = {
-  index: 'people',
-  calls: 'phone',
-  status: 'camera',
+/**
+ * Filled when selected, outline when not — the convention both platforms use,
+ * and it keeps the selected tab legible for anyone who cannot pick the accent
+ * colour out from the muted one.
+ */
+const TAB_ICONS: Record<string, { on: IconName; off: IconName }> = {
+  index: { on: 'chats', off: 'chatsOutline' },
+  contacts: { on: 'people', off: 'peopleOutline' },
+  calls: { on: 'phone', off: 'phoneOutline' },
 };
 
 const TAB_LABELS: Record<string, string> = {
   index: 'Chats',
+  contacts: 'Contacts',
   calls: 'Calls',
-  status: 'Status',
 };
 
 /**
@@ -44,7 +49,8 @@ function TabBar({ state, navigation }: BottomTabBarProps) {
       {state.routes.map((route, index) => {
         const focused = state.index === index;
         const label = TAB_LABELS[route.name] ?? route.name;
-        const icon = TAB_ICONS[route.name] ?? 'chevron';
+        const pair = TAB_ICONS[route.name];
+        const icon: IconName = pair ? (focused ? pair.on : pair.off) : 'chevron';
         const badge = route.name === 'index' ? totalUnread : 0;
         const color = focused ? theme.colors.accent : theme.colors.textMuted;
 
@@ -112,9 +118,10 @@ export default function TabsLayout() {
       screenOptions={{ headerShown: false }}
       tabBar={(props) => <TabBar {...props} />}
     >
+      {/* Chats, Contacts, Calls. No Status tab — stories are out of scope. */}
       <Tabs.Screen name="index" options={{ title: 'Chats' }} />
+      <Tabs.Screen name="contacts" options={{ title: 'Contacts' }} />
       <Tabs.Screen name="calls" options={{ title: 'Calls' }} />
-      <Tabs.Screen name="status" options={{ title: 'Status' }} />
     </Tabs>
   );
 }

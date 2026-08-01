@@ -709,6 +709,15 @@ export function isChatMuted(chat: ChatSummary | undefined, uid: string): boolean
   return until === -1 || until > Date.now();
 }
 
+/**
+ * Clears my unread badge without opening the chat. Deliberately does *not*
+ * touch `seenBy` on the messages — the peer's read receipts should only turn
+ * blue when the messages were actually on screen.
+ */
+export async function markChatRead(chatId: string, uid: string): Promise<void> {
+  await write(Paths.unread(chatId, uid), 0);
+}
+
 /** Per-user clear: hides history for me, leaves the peer's copy intact. */
 export async function clearChat(chatId: string, uid: string): Promise<void> {
   await write(Paths.clearedAt(chatId, uid), serverTimestamp());

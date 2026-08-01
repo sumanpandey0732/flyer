@@ -197,8 +197,34 @@ export const appState = {
 
 // --- selectors ---
 
+/**
+ * Pinned chats first, then most-recent. Archived chats are excluded — they live
+ * behind the "Archived" row, exactly like WhatsApp.
+ */
 export const selectSortedChats = (s: AppState): ChatSummary[] =>
-  Object.values(s.chats).sort((a, b) => b.lastTimestamp - a.lastTimestamp);
+  Object.values(s.chats)
+    .filter((c) => !c.archived)
+    .sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      return b.lastTimestamp - a.lastTimestamp;
+    });
+
+export const selectArchivedChats = (s: AppState): ChatSummary[] =>
+  Object.values(s.chats)
+    .filter((c) => c.archived)
+    .sort((a, b) => b.lastTimestamp - a.lastTimestamp);
+
+/**
+ * Unread across archived chats too: the count on the Archived row is what tells
+ * the user something is waiting in there.
+ */
+export const selectArchivedUnread = (s: AppState): number => {
+  const uid = s.currentUser?.uid;
+  if (!uid) return 0;
+  return Object.values(s.chats)
+    .filter((c) => c.archived)
+    .reduce((sum, c) => sum + (c.unread?.[uid] ?? 0), 0);
+};
 
 export const selectTotalUnread = (s: AppState): number => {
   const uid = s.currentUser?.uid;
