@@ -1,0 +1,24 @@
+{
+  "name": "flyer-functions",
+  "version": "1.0.0",
+  "description": "Flyer — Cloud Functions: call signalling pushes, message pushes, call history, and scheduled reaping.",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "serve": "firebase emulators:start --only functions,database",
+    "shell": "firebase functions:shell",
+    "deploy": "firebase deploy --only functions",
+    "logs": "firebase functions:log"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.2",
+    "firebase-functions": "^6.1.1"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.1"
+  }
+}

@@ -1,0 +1,14 @@
+node_modules/
+
+# Runtime config / secrets pulled down by the CLI.
+.env
+.env.*
+!.env.example
+.runtimeconfig.json
+
+# Emulator + CLI debug output.
+*.log
+firebase-debug.log
+database-debug.log
+ui-debug.log
+.firebase/
