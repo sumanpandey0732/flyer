@@ -8,8 +8,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GROUP_MAX_MEMBERS, GROUP_NAME_MAX } from '@/src/config/types';
 import { useTheme } from '@/src/theme/ThemeProvider';

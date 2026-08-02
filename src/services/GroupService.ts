@@ -60,10 +60,17 @@ async function writeSystemMessage(
   chatId: string,
   authorUid: string,
   event: SystemEvent,
-  preview: string
+  preview: string,
+  /**
+   * Whose chat index to bump. Defaults to the store's participant list, which is
+   * right for every case except a group that was created moments ago and has not
+   * reached the store yet — there the caller passes the list it just wrote.
+   */
+  recipients?: string[]
 ): Promise<void> {
   const messageId = pushKey(Paths.messages(chatId));
-  const participants = Object.keys(chatOf(chatId)?.participants ?? { [authorUid]: true });
+  const participants =
+    recipients ?? Object.keys(chatOf(chatId)?.participants ?? { [authorUid]: true });
 
   const updates: Record<string, unknown> = {
     [Paths.message(chatId, messageId)]: {
@@ -101,11 +108,37 @@ async function writeSystemMessage(
 }
 
 /**
+ * Adds members to a group that already exists on the server.
+ *
+ * Split out of both `createGroup` and `addMembers` because the rules authorise
+ * this write by looking the caller up in `chats/{chatId}/admins` — which requires
+ * the chat to be there to look at. It deliberately does not consult the store, so
+ * it works for a group created milliseconds ago that no listener has seen yet.
+ */
+async function seedMembers(chatId: string, uids: string[]): Promise<void> {
+  if (uids.length === 0) return;
+  const updates: Record<string, unknown> = {};
+  for (const uid of uids) {
+    updates[`${Paths.chat(chatId)}/participants/${uid}`] = true;
+    updates[`${Paths.chat(chatId)}/unread/${uid}`] = 0;
+    updates[Paths.userChat(uid, chatId)] = { lastTimestamp: serverTimestamp() };
+  }
+  await fanOut(updates);
+}
+
+/**
  * Creates the group and returns its id.
  *
  * The creator is the sole admin. `memberUids` is the invite list without the
  * creator; duplicates and the creator's own uid are tolerated so callers can
  * pass a raw selection.
+ *
+ * This is three sequential writes, not one, and it has to be. Every `userChats`
+ * entry — including the creator's own — is authorised by looking the writer up in
+ * `chats/{chatId}`, and the rules evaluate that against the *pre-write* tree. So
+ * the chat has to land before any index entry pointing at it can be accepted, and
+ * the creator has to be an admin of a chat that exists before they can seed
+ * anybody else's.
  */
 export async function createGroup(
   creatorUid: string,
@@ -117,46 +150,51 @@ export async function createGroup(
   if (!trimmed) throw new Error('A group needs a name');
   if (trimmed.length > GROUP_NAME_MAX) throw new Error('That name is too long');
 
-  const members = Array.from(new Set([creatorUid, ...memberUids]));
-  if (members.length < 2) throw new Error('Add at least one other person');
-  if (members.length > GROUP_MAX_MEMBERS) {
+  const others = Array.from(new Set(memberUids)).filter((uid) => uid !== creatorUid);
+  if (others.length === 0) throw new Error('Add at least one other person');
+  if (others.length + 1 > GROUP_MAX_MEMBERS) {
     throw new Error(`A group can hold ${GROUP_MAX_MEMBERS} people`);
   }
 
   const chatId = pushKey(Paths.chats());
-  const participants: Record<string, boolean> = {};
-  const unread: Record<string, number> = {};
-  for (const uid of members) {
-    participants[uid] = true;
-    unread[uid] = 0;
-  }
 
-  const updates: Record<string, unknown> = {
-    [Paths.chat(chatId)]: {
-      isGroup: true,
-      name: trimmed,
-      photoURL,
-      description: null,
-      participants,
-      admins: { [creatorUid]: true },
-      createdBy: creatorUid,
-      createdAt: serverTimestamp(),
-      lastMessage: null,
-      lastTimestamp: serverTimestamp(),
-      unread,
-    },
-  };
-  for (const uid of members) {
-    updates[Paths.userChat(uid, chatId)] = { lastTimestamp: serverTimestamp() };
-  }
+  await write(Paths.chat(chatId), {
+    isGroup: true,
+    name: trimmed,
+    photoURL,
+    description: null,
+    participants: { [creatorUid]: true },
+    admins: { [creatorUid]: true },
+    createdBy: creatorUid,
+    createdAt: serverTimestamp(),
+    lastMessage: null,
+    lastTimestamp: serverTimestamp(),
+    unread: { [creatorUid]: 0 },
+  });
 
-  await fanOut(updates);
+  // The creator goes through `seedMembers` alongside everyone else. Their
+  // participant and unread entries are already there from the write above, so
+  // those two paths are rewritten to the same values; what this actually
+  // accomplishes is their `userChats` index, which could not have been part of
+  // the creation write.
+  await seedMembers(chatId, [creatorUid, ...others]);
+
+  const everyone = [creatorUid, ...others];
   await writeSystemMessage(
     chatId,
     creatorUid,
     { kind: 'group_created', by: creatorUid },
-    previewFor('text', 'Group created')
+    previewFor('text', 'Group created'),
+    everyone
   );
+  await writeSystemMessage(
+    chatId,
+    creatorUid,
+    { kind: 'members_added', by: creatorUid, uids: others },
+    'Members added',
+    everyone
+  );
+
   return chatId;
 }
 
@@ -176,19 +214,14 @@ export async function addMembers(
     throw new Error(`A group can hold ${GROUP_MAX_MEMBERS} people`);
   }
 
-  const updates: Record<string, unknown> = {};
-  for (const uid of fresh) {
-    updates[`${Paths.chat(chatId)}/participants/${uid}`] = true;
-    updates[`${Paths.chat(chatId)}/unread/${uid}`] = 0;
-    updates[Paths.userChat(uid, chatId)] = { lastTimestamp: serverTimestamp() };
-  }
-  await fanOut(updates);
+  await seedMembers(chatId, fresh);
 
   await writeSystemMessage(
     chatId,
     byUid,
     { kind: 'members_added', by: byUid, uids: fresh },
-    'Members added'
+    'Members added',
+    [...existing, ...fresh]
   );
 }
 
@@ -223,7 +256,13 @@ export async function removeMember(
  *
  * If the leaver is the last admin, the longest-standing remaining member is
  * promoted — a group with no admin can never be renamed or moderated again.
- * When the last member leaves, the chat and its messages are removed outright.
+ *
+ * The last member out does not delete the chat node. Nothing in this app deletes
+ * a shared chat — `deleteChatForMe` does not either — because the rules make
+ * `chats/{id}` create-only, and a client that could delete the node could delete
+ * a live conversation out from under everyone still in it. An emptied group is
+ * left orphaned and unreadable instead: its read rule requires the reader to be a
+ * participant, and by then nobody is.
  */
 export async function leaveGroup(chatId: string, uid: string): Promise<void> {
   const chat = chatOf(chatId);
@@ -233,8 +272,9 @@ export async function leaveGroup(chatId: string, uid: string): Promise<void> {
 
   if (others.length === 0) {
     await fanOut({
-      [Paths.chat(chatId)]: null,
-      [Paths.messages(chatId)]: null,
+      [`${Paths.chat(chatId)}/participants/${uid}`]: null,
+      [`${Paths.chat(chatId)}/admins/${uid}`]: null,
+      [`${Paths.chat(chatId)}/unread/${uid}`]: null,
       [Paths.userChat(uid, chatId)]: null,
     });
     appState.get().removeChat(chatId);

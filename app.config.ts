@@ -122,11 +122,15 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   experiments: {
     typedRoutes: true,
   },
-
+ 
   extra: {
     router: {},
+    // No fallback id.  A placeholder here is worse than nothing: `eas init` reads
+    // this field to decide whether the project is already linked, so a fake uuid
+    // makes it skip linking and then fail looking the fake up.  Left undefined,
+    // `eas init` creates the project and prints the real id, which goes in `.env`.
     eas: {
-      projectId: process.env.EAS_PROJECT_ID ?? '00000000-0000-0000-0000-000000000000',
+      projectId: 'bc34843e-825a-4f6d-a88c-0e185184792a',
     },
   },
 });
