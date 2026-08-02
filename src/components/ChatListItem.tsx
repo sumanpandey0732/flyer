@@ -13,6 +13,11 @@ interface Props {
   peer: UserProfile | null;
   myUid: string;
   muted: boolean;
+  /**
+   * Resolves a group member's uid to a name, for the "Ana: hello" preview
+   * prefix. Not needed for 1:1 chats, where the sender is unambiguous.
+   */
+  nameOf?: (uid: string) => string;
   onPress: () => void;
   onLongPress: () => void;
 }
@@ -35,7 +40,15 @@ function formatListTime(ts: number): string {
   return then.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit', year: '2-digit' });
 }
 
-function ChatListItemImpl({ chat, peer, myUid, muted, onPress, onLongPress }: Props) {
+function ChatListItemImpl({
+  chat,
+  peer,
+  myUid,
+  muted,
+  nameOf,
+  onPress,
+  onLongPress,
+}: Props) {
   const theme = useTheme();
   const typing = useAppStore(selectPeerTyping(chat.id, myUid));
 
@@ -45,10 +58,26 @@ function ChatListItemImpl({ chat, peer, myUid, muted, onPress, onLongPress }: Pr
   const outgoing = last?.senderId === myUid;
 
   // A peer who hides last-seen also hides the presence dot; showing it would leak
-  // exactly the signal the setting exists to suppress.
-  const showPresence = Boolean(peer?.online) && peer?.privacy?.showLastSeen !== false;
+  // exactly the signal the setting exists to suppress. Groups have no single
+  // presence to show at all.
+  const showPresence =
+    !chat.isGroup && Boolean(peer?.online) && peer?.privacy?.showLastSeen !== false;
 
-  const name = peer?.name ?? 'Unknown';
+  const name = chat.isGroup ? (chat.name ?? 'Group') : (peer?.name ?? 'Unknown');
+
+  /*
+   * Group previews carry the sender's name, because "on my way" from an unnamed
+   * someone in a nine-person group is not information. System rows are the
+   * exception: their text already names whoever acted.
+   */
+  const previewPrefix =
+    chat.isGroup && last && !last.deleted && last.type !== 'system'
+      // Own messages get the tick instead — a prefix on top of it would be
+      // saying the same thing twice, which is what WhatsApp avoids here too.
+      ? outgoing
+        ? ''
+        : `${nameOf?.(last.senderId) ?? 'Unknown'}: `
+      : '';
 
   const previewColor = typing
     ? theme.colors.accent
@@ -62,16 +91,19 @@ function ChatListItemImpl({ chat, peer, myUid, muted, onPress, onLongPress }: Pr
       onLongPress={onLongPress}
       delayLongPress={300}
       accessibilityRole="button"
-      accessibilityLabel={`Chat with ${name}${hasUnread ? `, ${unread} unread` : ''}`}
+      accessibilityLabel={`${chat.isGroup ? 'Group' : 'Chat with'} ${name}${
+        hasUnread ? `, ${unread} unread` : ''
+      }`}
       style={styles.row}
     >
       <Avatar
-        uri={peer?.photoURL ?? null}
+        uri={chat.isGroup ? chat.photoURL : (peer?.photoURL ?? null)}
         name={name}
-        uid={peer?.uid ?? chat.id}
+        uid={chat.isGroup ? chat.id : (peer?.uid ?? chat.id)}
         size={52}
         online={showPresence}
-        showPhoto={peer?.privacy?.showPhoto !== false}
+        showPhoto={chat.isGroup || peer?.privacy?.showPhoto !== false}
+        group={chat.isGroup}
       />
 
       <View style={[styles.center, { borderBottomColor: theme.colors.border }]}>
@@ -103,7 +135,9 @@ function ChatListItemImpl({ chat, peer, myUid, muted, onPress, onLongPress }: Pr
                 ]}
                 numberOfLines={1}
               >
-                {last.deleted ? 'This message was deleted' : last.text}
+                {last.deleted
+                  ? 'This message was deleted'
+                  : `${previewPrefix}${last.text}`}
               </Text>
             </>
           ) : (
@@ -172,7 +206,10 @@ export const ChatListItem = memo(ChatListItemImpl, (prev, next) => {
     prev.peer?.photoURL === next.peer?.photoURL &&
     prev.peer?.online === next.peer?.online &&
     prev.peer?.privacy?.showLastSeen === next.peer?.privacy?.showLastSeen &&
-    prev.peer?.privacy?.showPhoto === next.peer?.privacy?.showPhoto
+    prev.peer?.privacy?.showPhoto === next.peer?.privacy?.showPhoto &&
+    prev.chat.isGroup === next.chat.isGroup &&
+    prev.chat.name === next.chat.name &&
+    prev.chat.photoURL === next.chat.photoURL
   );
 });
 

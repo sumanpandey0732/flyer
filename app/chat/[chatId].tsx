@@ -27,6 +27,7 @@ import { Icon } from '@/src/components/Icon';
 import { Pressable } from '@/src/components/Pressable';
 import { Composer } from '@/src/components/Composer';
 import { MessageBubble } from '@/src/components/MessageBubble';
+import { SystemMessage } from '@/src/components/SystemMessage';
 import {
   MessageActionsSheet,
   type MessageAction,
@@ -144,10 +145,22 @@ export default function ChatScreen() {
   );
   const blockedMap = useAppStore((s) => s.blocked);
 
+  const isGroup = chat?.isGroup === true;
+
   const peerUid = useMemo(() => {
     if (!chatId || !myUid) return null;
+    // A group has no peer. The id fallback exists for a 1:1 chat opened from a
+    // deep link before its node has loaded, and a push-key group id would make
+    // it derive nonsense.
+    if (isGroup) return null;
     return (chat ? peerOf(chat, myUid) : null) ?? derivePeerFromId(chatId, myUid);
-  }, [chat, chatId, myUid]);
+  }, [chat, chatId, myUid, isGroup]);
+
+  /** Every member except me. Used for the group header subtitle and member count. */
+  const groupMemberUids = useMemo(
+    () => (isGroup ? Object.keys(chat?.participants ?? {}) : []),
+    [isGroup, chat?.participants]
+  );
 
   const peer = useAppStore((s) => (peerUid ? s.users[peerUid] : undefined)) ?? null;
   const peerTyping = useAppStore(selectPeerTyping(chatId ?? '', myUid ?? ''));
@@ -164,6 +177,14 @@ export default function ChatScreen() {
   const [muteOpen, setMuteOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [peerBlockedMe, setPeerBlockedMe] = useState(false);
+  /** Long-press selection. Empty set means normal mode. */
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  /**
+   * The unread count as it was when this chat was opened. `markSeen` zeroes the
+   * live counter within a second of mounting, so the divider has to be pinned to
+   * a snapshot or it would disappear before it had been read.
+   */
+  const [entryUnread, setEntryUnread] = useState<number | null>(null);
 
   const listRef = useRef<FlatList<ChatListItem>>(null);
   const loadingRef = useRef(false);
@@ -175,7 +196,10 @@ export default function ChatScreen() {
   );
 
   // Inverted list: index 0 must be the newest item.
-  const items = useMemo(() => buildMessageList(messages).slice().reverse(), [messages]);
+  const items = useMemo(
+    () => buildMessageList(messages, entryUnread ?? 0).slice().reverse(),
+    [messages, entryUnread]
+  );
 
   const indexById = useMemo(() => {
     const map = new Map<string, number>();
@@ -197,6 +221,14 @@ export default function ChatScreen() {
   const unreadCount = myUid ? (chat?.unread?.[myUid] ?? 0) : 0;
   const privacy = peer?.privacy ?? DEFAULT_PRIVACY;
   const peerName = peer?.name ?? 'Flyer user';
+  /** Header title: the group's name, or the peer's. */
+  const title = isGroup ? (chat?.name ?? 'Group') : peerName;
+
+  const users = useAppStore((s) => s.users);
+  const nameOf = useCallback(
+    (uid: string) => (uid === myUid ? 'You' : (users[uid]?.name ?? 'Unknown')),
+    [users, myUid]
+  );
 
   const disabledReason = iBlockedPeer
     ? `You blocked ${peerName}. Unblock them to send messages.`
@@ -284,6 +316,19 @@ export default function ChatScreen() {
       };
     }, [chatId])
   );
+
+  /**
+   * Snapshot the unread count once, before the receipt below clears it.
+   *
+   * Waits for the first messages to arrive so the divider is positioned against
+   * a populated list, and latches on the first non-null value: messages that
+   * arrive later while the screen is open are read as they land, so they belong
+   * below the divider, not above a new one.
+   */
+  useEffect(() => {
+    if (entryUnread !== null || !myUid || liveMessages.length === 0) return;
+    setEntryUnread(chat?.unread?.[myUid] ?? 0);
+  }, [entryUnread, myUid, chat, liveMessages.length]);
 
   // Receipts on focus and on every new arrival while the screen is open.
   useEffect(() => {
@@ -411,7 +456,8 @@ export default function ChatScreen() {
 
   const handleSendText = useCallback(
     async (text: string) => {
-      if (!chatId || !myUid || !peerUid) return;
+      // Groups have no peerUid; recipients come from the participant list.
+      if (!chatId || !myUid || (!peerUid && !isGroup)) return;
       const quoted = replyTo;
       setReplyTo(null);
 
@@ -423,12 +469,12 @@ export default function ChatScreen() {
         alertError('Message not sent', 'Check your connection and try again.');
       }
     },
-    [chatId, myUid, peerUid, replyTo, scrollToBottom]
+    [chatId, myUid, peerUid, isGroup, replyTo, scrollToBottom]
   );
 
   const handleSendMedia = useCallback(
     async (picked: PickedMedia[]) => {
-      if (!chatId || !myUid || !peerUid || picked.length === 0) return;
+      if (!chatId || !myUid || (!peerUid && !isGroup) || picked.length === 0) return;
       const quoted = replyTo;
       setReplyTo(null);
       scrollToBottom();
@@ -463,12 +509,12 @@ export default function ChatScreen() {
         }
       }
     },
-    [chatId, myUid, peerUid, replyTo, scrollToBottom]
+    [chatId, myUid, peerUid, isGroup, replyTo, scrollToBottom]
   );
 
   const handleSendVoice = useCallback(
     async (uri: string, durationMs: number) => {
-      if (!chatId || !myUid || !peerUid) return;
+      if (!chatId || !myUid || (!peerUid && !isGroup)) return;
       const quoted = replyTo;
       setReplyTo(null);
       scrollToBottom();
@@ -487,7 +533,7 @@ export default function ChatScreen() {
         alertError('Voice note not sent', 'Check your connection and try again.');
       }
     },
-    [chatId, myUid, peerUid, replyTo, scrollToBottom]
+    [chatId, myUid, peerUid, isGroup, replyTo, scrollToBottom]
   );
 
   const handleTyping = useCallback(() => {
@@ -513,7 +559,7 @@ export default function ChatScreen() {
 
   const handleRetry = useCallback(
     async (message: Message) => {
-      if (!chatId || !myUid || !peerUid) return;
+      if (!chatId || !myUid || (!peerUid && !isGroup)) return;
 
       // Drop the dead copy first so the retry does not render twice.
       await dropQueued(message.id).catch(() => {});
@@ -521,6 +567,9 @@ export default function ChatScreen() {
       setOlder((prev) => prev.filter((m) => m.id !== message.id));
 
       const type = message.type;
+      // `system` messages are written by the group operations, never queued, so
+      // there is nothing to retry for them.
+      if (type === 'system') return;
 
       try {
         if (type === 'text') {
@@ -546,7 +595,7 @@ export default function ChatScreen() {
         console.warn('[Flyer/chat] retry failed', e);
       }
     },
-    [chatId, myUid, peerUid]
+    [chatId, myUid, peerUid, isGroup]
   );
 
   const handleSmartReply = useCallback(
@@ -572,9 +621,75 @@ export default function ChatScreen() {
     setViewing(message);
   }, []);
 
-  const openActions = useCallback((message: Message) => {
-    setActionsFor(message);
+  // --- selection mode -----------------------------------------------------
+
+  const selectionMode = selectedIds.size > 0;
+
+  const toggleSelected = useCallback((messageId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) next.delete(messageId);
+      else next.add(messageId);
+      return next;
+    });
   }, []);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  /**
+   * Long press opens the action sheet normally, and extends the selection once
+   * selection mode is already active — the same split WhatsApp uses, where the
+   * first long press is a shortcut to one message's actions and the checkbox in
+   * that sheet is what escalates to a batch.
+   */
+  const openActions = useCallback(
+    (message: Message) => {
+      if (selectionMode) {
+        toggleSelected(message.id);
+        return;
+      }
+      setActionsFor(message);
+    },
+    [selectionMode, toggleSelected]
+  );
+
+  /** Entering selection mode from the action sheet. */
+  const startSelection = useCallback((message: Message) => {
+    setActionsFor(null);
+    setReplyTo(null);
+    setEditing(null);
+    setSelectedIds(new Set([message.id]));
+  }, []);
+
+  /** Tap while selecting toggles instead of opening media. */
+  const onPressMessage = useCallback(
+    (message: Message) => {
+      if (selectionMode) toggleSelected(message.id);
+    },
+    [selectionMode, toggleSelected]
+  );
+
+  // Selection is by id, but every batch action needs the messages themselves,
+  // and in the order they were sent rather than the order they were tapped.
+  const selectedMessages = useMemo(
+    () => messages.filter((m) => selectedIds.has(m.id)),
+    [messages, selectedIds]
+  );
+
+  // A selection can go stale: "delete for everyone" removes bubbles the user had
+  // ticked. Dropping ids that no longer exist keeps the counter honest.
+  useEffect(() => {
+    if (selectedIds.size === 0) return;
+    const live = new Set(messages.map((m) => m.id));
+    const stale = [...selectedIds].filter((id) => !live.has(id));
+    if (stale.length === 0) return;
+
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      stale.forEach((id) => next.delete(id));
+      return next;
+    });
+  }, [messages, selectedIds]);
 
   const handleReact = useCallback(
     async (emoji: string) => {
@@ -665,6 +780,13 @@ export default function ChatScreen() {
             params: { chatId, messageId: message.id },
           }),
       });
+
+      list.push({
+        key: 'select',
+        label: 'Select messages',
+        icon: 'check',
+        onPress: () => startSelection(message),
+      });
     }
 
     if (mine && !message.deleted && !message.pending && message.type === 'text') {
@@ -739,7 +861,115 @@ export default function ChatScreen() {
     }
 
     return list;
-  }, [actionsFor, chatId, myUid, starredIds, editing, handleRetry, startReply, router]);
+  }, [
+    actionsFor,
+    chatId,
+    myUid,
+    starredIds,
+    editing,
+    handleRetry,
+    startReply,
+    startSelection,
+    router,
+  ]);
+
+  // --- batch actions ------------------------------------------------------
+
+  const handleBulkDelete = useCallback(async () => {
+    if (!chatId || !myUid || selectedMessages.length === 0) return;
+
+    const count = selectedMessages.length;
+    const mine = selectedMessages.filter((m) => m.senderId === myUid && !m.deleted && !m.pending);
+
+    /*
+     * "Delete for everyone" is only offered when every selected message is one
+     * the user is allowed to unsend. On a mixed selection the safe subset is
+     * ambiguous, and a confirm that silently does two different things to two
+     * halves of a selection is how people delete the wrong thing.
+     */
+    const forEveryone =
+      mine.length === count
+        ? await confirm({
+            title: `Delete ${count} message${count > 1 ? 's' : ''} for everyone?`,
+            message: 'They will be replaced with "This message was deleted" for both of you.',
+            confirmLabel: 'Delete for everyone',
+            destructive: true,
+          })
+        : await confirm({
+            title: `Delete ${count} message${count > 1 ? 's' : ''}?`,
+            message: 'This removes them from your device only.',
+            confirmLabel: 'Delete for me',
+            destructive: true,
+          });
+
+    if (!forEveryone && mine.length === count) {
+      // Declining "for everyone" cancels rather than falling back to a local
+      // delete: the user asked for one specific thing and said no to it.
+      clearSelection();
+      return;
+    }
+
+    const batch = selectedMessages;
+    clearSelection();
+
+    // Sequential: two writes to the same message path would race, and a bulk
+    // delete of 30 messages fanned out at once is a burst the rules throttle.
+    try {
+      if (mine.length === count) {
+        for (const m of batch) await deleteMessage(chatId, m.id);
+      } else {
+        for (const m of batch) await deleteMessageForMe(chatId, m.id, myUid);
+      }
+    } catch (e) {
+      console.warn('[Flyer/chat] bulk delete failed', e);
+      alertError('Could not delete every message', 'Some may still be there. Please try again.');
+    }
+  }, [chatId, myUid, selectedMessages, clearSelection]);
+
+  const handleBulkStar = useCallback(async () => {
+    if (!chatId || !myUid || selectedMessages.length === 0) return;
+
+    // Star the whole selection unless it is already entirely starred, in which
+    // case the obvious intent is to clear it. `toggleStar` per message would
+    // otherwise invert a mixed selection into the opposite mixed selection.
+    const allStarred = selectedMessages.every((m) => starredIds.has(m.id));
+    const batch = selectedMessages;
+    clearSelection();
+
+    try {
+      await Promise.all(
+        batch
+          .filter((m) => starredIds.has(m.id) === allStarred)
+          .map((m) => toggleStar(myUid, chatId, m.id))
+      );
+    } catch (e) {
+      console.warn('[Flyer/chat] bulk star failed', e);
+    }
+  }, [chatId, myUid, selectedMessages, starredIds, clearSelection]);
+
+  const handleBulkCopy = useCallback(() => {
+    // Media has no text to copy, so it is skipped rather than pasted as a URL.
+    const text = selectedMessages
+      .filter((m) => !m.deleted && m.text)
+      .map((m) => m.text)
+      .join('\n');
+
+    clearSelection();
+    if (!text) return;
+
+    Clipboard.setStringAsync(text).catch((e) => console.warn('[Flyer/chat] bulk copy failed', e));
+  }, [selectedMessages, clearSelection]);
+
+  const handleBulkForward = useCallback(() => {
+    const ids = selectedMessages.map((m) => m.id);
+    if (ids.length === 0 || !chatId) return;
+
+    clearSelection();
+    router.push({
+      pathname: '/forward',
+      params: { chatId, messageIds: ids.join(',') },
+    });
+  }, [chatId, selectedMessages, clearSelection, router]);
 
   // --- header actions -----------------------------------------------------
 
@@ -749,9 +979,13 @@ export default function ChatScreen() {
   }, [router]);
 
   const openProfile = useCallback(() => {
+    if (isGroup) {
+      router.push(`/group/${chatId}`);
+      return;
+    }
     if (!peerUid) return;
     router.push(`/user/${peerUid}`);
-  }, [peerUid, router]);
+  }, [isGroup, chatId, peerUid, router]);
 
   const placeCall = useCallback(
     async (type: 'voice' | 'video') => {
@@ -894,20 +1128,79 @@ export default function ChatScreen() {
         );
       }
 
+      if (item.kind === 'unread') {
+        return (
+          <View style={styles.dividerRow}>
+            <View
+              style={[
+                styles.dividerPill,
+                { backgroundColor: theme.colors.warning, borderColor: theme.colors.border },
+              ]}
+            >
+              <Text style={[styles.dividerLabel, { color: theme.colors.bg }]}>
+                {item.count} unread message{item.count !== 1 ? 's' : ''}
+              </Text>
+            </View>
+          </View>
+        );
+      }
+
+      // Group events: not a bubble, and not selectable — nobody sent them, so
+      // there is nothing to reply to, forward, or delete.
+      if (item.message.type === 'system') {
+        return (
+          <SystemMessage
+            event={item.message.event}
+            nameOf={nameOf}
+            myUid={myUid ?? ''}
+          />
+        );
+      }
+
+      const checked = selectedIds.has(item.message.id);
+
       return (
-        <MessageBubble
-          message={item.message}
-          mine={item.message.senderId === myUid}
-          peerUid={peerUid}
-          sender={peer}
-          showTail={item.showTail}
-          starred={starredIds.has(item.message.id)}
-          onLongPress={openActions}
-          onPressMedia={openMedia}
-          onReply={startReply}
-          onRetry={(message) => void handleRetry(message)}
-          onPressReply={(messageId) => void jumpToMessage(messageId)}
-        />
+        <View style={[styles.bubbleRow, checked && { backgroundColor: theme.colors.chatSelection }]}>
+          {selectionMode ? (
+            <Pressable
+              onPress={() => toggleSelected(item.message.id)}
+              round={26}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked }}
+              accessibilityLabel={`Select message from ${item.message.senderId === myUid ? 'you' : peerName}`}
+              style={[
+                styles.checkbox,
+                {
+                  borderColor: checked ? theme.colors.accent : theme.colors.border,
+                  backgroundColor: checked ? theme.colors.accent : 'transparent',
+                },
+              ]}
+            >
+              {checked ? <Icon name="accept" size={13} color={theme.colors.accentText} /> : null}
+            </Pressable>
+          ) : null}
+          <View style={styles.bubbleBody}>
+            <MessageBubble
+              message={item.message}
+              mine={item.message.senderId === myUid}
+              peerUid={peerUid}
+              // In a group the sender differs per row, so the profile is looked
+              // up per message rather than being the one fixed peer.
+              sender={
+                isGroup ? (users[item.message.senderId] ?? null) : peer
+              }
+              showSenderName={isGroup}
+              showTail={item.showTail}
+              starred={starredIds.has(item.message.id)}
+              onLongPress={openActions}
+              onPress={selectionMode ? onPressMessage : undefined}
+              onPressMedia={openMedia}
+              onReply={startReply}
+              onRetry={(message) => void handleRetry(message)}
+              onPressReply={(messageId) => void jumpToMessage(messageId)}
+            />
+          </View>
+        </View>
       );
     },
     [
@@ -915,7 +1208,15 @@ export default function ChatScreen() {
       myUid,
       peerUid,
       peer,
+      peerName,
+      isGroup,
+      users,
+      nameOf,
       starredIds,
+      selectedIds,
+      selectionMode,
+      toggleSelected,
+      onPressMessage,
       openActions,
       openMedia,
       startReply,
@@ -924,13 +1225,31 @@ export default function ChatScreen() {
     ]
   );
 
-  const presenceLine = peerTyping
-    ? 'typing…'
-    : formatLastSeen(
-        peer?.online === true,
-        peer?.lastSeen ?? 0,
-        privacy.showLastSeen !== false
-      );
+  /**
+   * Group subtitle: the member list, as WhatsApp shows it — "You, Ana, Ben".
+   * It is the fastest way to see who can read what you are about to type.
+   */
+  const groupSubtitle = useMemo(() => {
+    if (!isGroup) return '';
+    const names = groupMemberUids.map((uid) =>
+      uid === myUid ? 'You' : (users[uid]?.name ?? 'Unknown')
+    );
+    // "You" first, then the rest in the order the participant map yields.
+    names.sort((a, b) => (a === 'You' ? -1 : b === 'You' ? 1 : 0));
+    return names.join(', ');
+  }, [isGroup, groupMemberUids, users, myUid]);
+
+  const presenceLine = isGroup
+    ? peerTyping
+      ? 'typing…'
+      : groupSubtitle
+    : peerTyping
+      ? 'typing…'
+      : formatLastSeen(
+          peer?.online === true,
+          peer?.lastSeen ?? 0,
+          privacy.showLastSeen !== false
+        );
 
   if (!chatId || !myUid) {
     return (
@@ -968,16 +1287,17 @@ export default function ChatScreen() {
           accessibilityLabel={`Open ${peerName}'s contact info`}
         >
           <Avatar
-            uri={peer?.photoURL ?? null}
-            name={peerName}
-            uid={peerUid ?? ''}
+            uri={isGroup ? (chat?.photoURL ?? null) : (peer?.photoURL ?? null)}
+            name={title}
+            uid={isGroup ? chatId : (peerUid ?? '')}
             size={38}
-            showPhoto={privacy.showPhoto !== false}
+            showPhoto={isGroup || privacy.showPhoto !== false}
+            group={isGroup}
           />
 
           <View style={styles.identityText}>
             <Text style={styles.headerName} numberOfLines={1}>
-              {peerName}
+              {title}
             </Text>
             {presenceLine ? (
               <Text
@@ -993,23 +1313,29 @@ export default function ChatScreen() {
           </View>
         </Pressable>
 
-        <Pressable
-          round={40}
-          onPress={() => void placeCall('video')}
-          accessibilityRole="button"
-          accessibilityLabel={`Video call ${peerName}`}
-        >
-          <Icon name="video" size={20} color="#FFFFFF" />
-        </Pressable>
+        {/* Calling is 1:1 WebRTC — there is no group call to place, so the
+            buttons are absent rather than present-and-broken. */}
+        {!isGroup ? (
+          <>
+            <Pressable
+              round={40}
+              onPress={() => void placeCall('video')}
+              accessibilityRole="button"
+              accessibilityLabel={`Video call ${peerName}`}
+            >
+              <Icon name="video" size={20} color="#FFFFFF" />
+            </Pressable>
 
-        <Pressable
-          round={40}
-          onPress={() => void placeCall('voice')}
-          accessibilityRole="button"
-          accessibilityLabel={`Voice call ${peerName}`}
-        >
-          <Icon name="phone" size={19} color="#FFFFFF" />
-        </Pressable>
+            <Pressable
+              round={40}
+              onPress={() => void placeCall('voice')}
+              accessibilityRole="button"
+              accessibilityLabel={`Voice call ${peerName}`}
+            >
+              <Icon name="phone" size={19} color="#FFFFFF" />
+            </Pressable>
+          </>
+        ) : null}
 
         <Pressable
           round={38}
@@ -1040,25 +1366,34 @@ export default function ChatScreen() {
               },
             ]}
           >
-            <MenuItem label="View contact" onPress={() => { setMenuOpen(false); openProfile(); }} />
+            <MenuItem
+              label={isGroup ? 'Group info' : 'View contact'}
+              onPress={() => { setMenuOpen(false); openProfile(); }}
+            />
             <MenuItem
               label={muted ? 'Unmute notifications' : 'Mute notifications'}
               onPress={() => void toggleMute()}
             />
             <MenuItem label="Clear chat" onPress={() => void handleClearChat()} />
-            <MenuItem
-              label={iBlockedPeer ? `Unblock ${peerName}` : `Block ${peerName}`}
-              destructive={!iBlockedPeer}
-              onPress={() => void toggleBlock()}
-            />
-            <MenuItem
-              label="Report"
-              destructive
-              onPress={() => {
-                setMenuOpen(false);
-                setReportOpen(true);
-              }}
-            />
+            {/* Blocking and reporting are person-to-person. In a group the
+                equivalent action is leaving, which lives on the info screen. */}
+            {!isGroup ? (
+              <>
+                <MenuItem
+                  label={iBlockedPeer ? `Unblock ${peerName}` : `Block ${peerName}`}
+                  destructive={!iBlockedPeer}
+                  onPress={() => void toggleBlock()}
+                />
+                <MenuItem
+                  label="Report"
+                  destructive
+                  onPress={() => {
+                    setMenuOpen(false);
+                    setReportOpen(true);
+                  }}
+                />
+              </>
+            ) : null}
           </View>
         </>
       ) : null}
@@ -1361,6 +1696,29 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   dayLabel: { fontSize: 12, fontWeight: '600' },
+
+  dividerRow: { alignItems: 'center', marginVertical: 8 },
+  dividerPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  dividerLabel: { fontSize: 12, fontWeight: '700' },
+
+  // The tick sits outside the bubble, and the row tints as a whole so a
+  // selected message reads as selected regardless of which side it is on.
+  bubbleRow: { flexDirection: 'row', alignItems: 'center' },
+  bubbleBody: { flex: 1 },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    marginLeft: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   empty: {
     alignItems: 'center',

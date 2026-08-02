@@ -60,9 +60,14 @@ export default function ChatsScreen() {
     const live = watched.current;
 
     for (const chat of chats) {
-      const peer = peerOf(chat, myUid);
-      if (peer && !live.has(peer)) {
-        live.set(peer, listenToUser(peer));
+      // Groups render every member's name in previews and bubbles, so all of
+      // them get watched, not just the single peer a 1:1 chat has.
+      const uids = chat.isGroup
+        ? Object.keys(chat.participants ?? {}).filter((uid) => uid !== myUid)
+        : [peerOf(chat, myUid)];
+
+      for (const uid of uids) {
+        if (uid && !live.has(uid)) live.set(uid, listenToUser(uid));
       }
     }
   }, [chats, myUid]);
@@ -82,6 +87,9 @@ export default function ChatsScreen() {
     [chats, users, myUid, term]
   );
 
+  /** Group previews prefix the sender's name; this resolves it from the cache. */
+  const nameOf = useCallback((uid: string) => users[uid]?.name ?? 'Unknown', [users]);
+
   const onRefresh = useCallback(async () => {
     if (!myUid) return;
     setRefreshing(true);
@@ -90,8 +98,12 @@ export default function ChatsScreen() {
     for (const off of watched.current.values()) off();
     watched.current.clear();
     for (const chat of chats) {
-      const peer = peerOf(chat, myUid);
-      if (peer) watched.current.set(peer, listenToUser(peer));
+      const uids = chat.isGroup
+        ? Object.keys(chat.participants ?? {}).filter((uid) => uid !== myUid)
+        : [peerOf(chat, myUid)];
+      for (const uid of uids) {
+        if (uid && !watched.current.has(uid)) watched.current.set(uid, listenToUser(uid));
+      }
     }
     setRefreshing(false);
   }, [chats, myUid]);
@@ -339,6 +351,7 @@ export default function ChatsScreen() {
                 peer={peerUid ? (users[peerUid] ?? null) : null}
                 myUid={myUid}
                 muted={isChatMuted(item, myUid)}
+                nameOf={nameOf}
                 onPress={() => router.push(`/chat/${item.id}`)}
                 onLongPress={() => setMenuFor(item)}
               />
@@ -378,7 +391,13 @@ export default function ChatsScreen() {
 
       <ActionSheet
         visible={menuFor !== null}
-        title={menuFor ? (users[peerOf(menuFor, myUid) ?? '']?.name ?? 'Chat') : ''}
+        title={
+          menuFor
+            ? menuFor.isGroup
+              ? (menuFor.name ?? 'Group')
+              : (users[peerOf(menuFor, myUid) ?? '']?.name ?? 'Chat')
+            : ''
+        }
         actions={chatActions}
         onClose={() => setMenuFor(null)}
       />

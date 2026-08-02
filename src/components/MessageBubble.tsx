@@ -11,14 +11,43 @@ import { Ticks } from './Ticks';
 import { AudioPlayer } from './AudioPlayer';
 import { SwipeableRow } from './SwipeableRow';
 
+/**
+ * Per-sender name colours for group chats, in the order WhatsApp assigns them.
+ * Picked by hashing the uid so a sender keeps the same colour across sessions
+ * and devices, without storing anything.
+ */
+const SENDER_COLORS = [
+  '#E8618C',
+  '#2E9BE6',
+  '#8E7CE0',
+  '#E5A33C',
+  '#39B6A8',
+  '#DE6B4E',
+  '#6BAF3F',
+  '#C0699E',
+];
+
+function senderColor(uid: string): string {
+  let hash = 0;
+  for (let i = 0; i < uid.length; i++) hash = (hash * 31 + uid.charCodeAt(i)) | 0;
+  return SENDER_COLORS[Math.abs(hash) % SENDER_COLORS.length];
+}
+
 interface Props {
   message: Message;
   mine: boolean;
   peerUid: string | null;
   sender: UserProfile | null;
+  /** True in a group chat: incoming bubbles get the sender's name on top. */
+  showSenderName?: boolean;
   showTail: boolean;
   starred: boolean;
   onLongPress: (message: Message) => void;
+  /**
+   * Overrides the default tap behaviour. Passed while the chat is in selection
+   * mode, where a tap must toggle the tick rather than open a photo viewer.
+   */
+  onPress?: (message: Message) => void;
   onPressMedia: (message: Message) => void;
   onReply: (message: Message) => void;
   onRetry: (message: Message) => void;
@@ -38,9 +67,11 @@ function MessageBubbleImpl({
   mine,
   peerUid,
   sender,
+  showSenderName = false,
   showTail,
   starred,
   onLongPress,
+  onPress,
   onPressMedia,
   onReply,
   onRetry,
@@ -113,6 +144,10 @@ function MessageBubbleImpl({
     <Pressable
       onLongPress={() => onLongPress(message)}
       onPress={() => {
+        if (onPress) {
+          onPress(message);
+          return;
+        }
         if (message.failed) onRetry(message);
         else if (message.type !== 'text' && message.type !== 'audio') onPressMedia(message);
       }}
@@ -124,6 +159,16 @@ function MessageBubbleImpl({
         showTail ? (mine ? styles.tailMine : styles.tailTheirs) : null,
       ]}
     >
+      {/* group sender name — incoming bubbles only, where "who" is ambiguous */}
+      {showSenderName && !mine ? (
+        <Text
+          style={[styles.senderName, { color: senderColor(message.senderId) }]}
+          numberOfLines={1}
+        >
+          {sender?.name ?? 'Unknown'}
+        </Text>
+      ) : null}
+
       {/* forwarded marker */}
       {message.forwardedFrom ? (
         <View style={styles.forwarded}>
@@ -282,7 +327,12 @@ export const MessageBubble = memo(MessageBubbleImpl, (prev, next) => {
     prev.showTail === next.showTail &&
     prev.starred === next.starred &&
     prev.mine === next.mine &&
-    prev.sender?.name === next.sender?.name
+    prev.sender?.name === next.sender?.name &&
+    prev.showSenderName === next.showSenderName &&
+    // Not a rendered value, but entering and leaving selection mode changes what
+    // a tap does. Comparing presence rather than identity keeps the memo useful:
+    // the handler is a fresh closure on every parent render.
+    Boolean(prev.onPress) === Boolean(next.onPress)
   );
 });
 
@@ -328,6 +378,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     marginBottom: 4,
   },
+  senderName: { fontSize: 13, fontWeight: '600', marginBottom: 2 },
   replyName: { fontSize: 12, fontWeight: '600' },
   replyPreview: { fontSize: 12, marginTop: 1 },
 

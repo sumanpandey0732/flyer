@@ -20,7 +20,7 @@
           ".validate": "newData.isString() && newData.val().length <= 254 && newData.val().matches(/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/)"
         },
         "photoURL": {
-          ".validate": "newData.isString() && newData.val().length <= 2048"
+          ".validate": "newData.isString() && newData.val().length <= 2048 || newData.val() === null"
         },
         "about": {
           ".validate": "newData.isString() && newData.val().length <= 256"
@@ -75,12 +75,40 @@
     "chats": {
       "$chatId": {
         ".read": "auth != null && data.child('participants').child(auth.uid).exists()",
-        ".write": "auth != null && !data.exists() && newData.exists() && $chatId.contains(auth.uid) && newData.child('participants').child(auth.uid).val() === true && !newData.hasChild('mutedBy') && !newData.hasChild('clearedAt')",
+
+        "//": "Create only. 1:1 ids are the sorted uid join, so membership is provable from the key itself; group ids are push keys, so the proof is that the creator writes themselves in as participant and admin.",
+        ".write": "auth != null && !data.exists() && newData.exists() && newData.child('participants').child(auth.uid).val() === true && !newData.hasChild('mutedBy') && !newData.hasChild('clearedAt') && (($chatId.contains(auth.uid) && newData.child('isGroup').val() !== true) || (newData.child('isGroup').val() === true && newData.child('admins').child(auth.uid).val() === true && newData.child('createdBy').val() === auth.uid))",
+
+        "isGroup": { ".validate": "newData.isBoolean()" },
+        "createdBy": { ".validate": "newData.isString() && newData.val() === auth.uid" },
+        "createdAt": { ".validate": "newData.isNumber() && newData.val() === now" },
+
+        "name": {
+          ".write": "auth != null && root.child('chats').child($chatId).child('isGroup').val() === true && root.child('chats').child($chatId).child('admins').child(auth.uid).val() === true",
+          ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 60"
+        },
+        "photoURL": {
+          ".write": "auth != null && root.child('chats').child($chatId).child('isGroup').val() === true && root.child('chats').child($chatId).child('admins').child(auth.uid).val() === true",
+          ".validate": "newData.val() === null || (newData.isString() && newData.val().length <= 2048)"
+        },
+        "description": {
+          ".write": "auth != null && root.child('chats').child($chatId).child('isGroup').val() === true && root.child('chats').child($chatId).child('admins').child(auth.uid).val() === true",
+          ".validate": "newData.val() === null || (newData.isString() && newData.val().length <= 300)"
+        },
+
+        "admins": {
+          "$uid": {
+            "//": "Admins grant and revoke. The self-clause is what lets a departing admin drop their own badge in the same fan-out that removes them.",
+            ".write": "auth != null && root.child('chats').child($chatId).child('admins').child(auth.uid).val() === true || (auth != null && auth.uid === $uid && !newData.exists())",
+            ".validate": "newData.val() === true && newData.parent().parent().child('participants').child($uid).val() === true"
+          }
+        },
 
         "participants": {
           "$uid": {
-            ".write": "auth != null && $chatId.contains(auth.uid) && $chatId.contains($uid) && !data.exists() && newData.val() === true",
-            ".validate": "newData.val() === true && $chatId.contains($uid)"
+            "//": "Three ways this changes: a 1:1 chat proves membership from the key, a group admin adds or removes, or a member removes themselves by leaving.",
+            ".write": "auth != null && (($chatId.contains(auth.uid) && $chatId.contains($uid) && !data.exists() && newData.val() === true) || root.child('chats').child($chatId).child('admins').child(auth.uid).val() === true || (auth.uid === $uid && !newData.exists()))",
+            ".validate": "newData.val() === true && ($chatId.contains($uid) || newData.parent().parent().child('isGroup').val() === true)"
           }
         },
 
@@ -88,7 +116,7 @@
           ".write": "auth != null && root.child('chats').child($chatId).child('participants').child(auth.uid).exists()",
           ".validate": "newData.hasChildren(['text', 'type', 'senderId'])",
           "text": { ".validate": "newData.isString() && newData.val().length <= 4096" },
-          "type": { ".validate": "newData.isString() && newData.val().matches(/^(text|image|video|audio)$/)" },
+          "type": { ".validate": "newData.isString() && newData.val().matches(/^(text|image|video|audio|system)$/)" },
           "senderId": { ".validate": "newData.isString() && newData.val().length <= 128" },
           "deleted": { ".validate": "newData.isBoolean()" },
           "$other": { ".validate": false }
@@ -101,7 +129,8 @@
 
         "unread": {
           "$uid": {
-            ".write": "auth != null && root.child('chats').child($chatId).child('participants').child(auth.uid).exists() && root.child('chats').child($chatId).child('participants').child($uid).exists()",
+            "//": "The old-participant clause lets a group admin clear the counter of the member they are removing, in the same fan-out.",
+            ".write": "auth != null && root.child('chats').child($chatId).child('participants').child(auth.uid).exists() && (root.child('chats').child($chatId).child('participants').child($uid).exists() || (!newData.exists() && root.child('chats').child($chatId).child('admins').child(auth.uid).val() === true) || (auth.uid === $uid && !newData.exists()))",
             ".validate": "newData.isNumber() && newData.val() >= 0"
           }
         },
@@ -129,7 +158,8 @@
         ".read": "auth != null && auth.uid === $uid",
         ".indexOn": ["lastTimestamp"],
         "$chatId": {
-          ".write": "auth != null && $chatId.contains($uid) && (auth.uid === $uid || $chatId.contains(auth.uid))",
+          "//": "Owner writes their own index freely. Others may only bump it, and only if they share the chat: a 1:1 peer is provable from the key, a group member from the participant list.",
+          ".write": "auth != null && ((auth.uid === $uid && ($chatId.contains($uid) || root.child('chats').child($chatId).child('participants').child($uid).exists())) || ($chatId.contains($uid) && $chatId.contains(auth.uid)) || (root.child('chats').child($chatId).child('participants').child(auth.uid).exists() && root.child('chats').child($chatId).child('participants').child($uid).exists()) || (root.child('chats').child($chatId).child('admins').child(auth.uid).val() === true && !newData.exists()))",
           ".validate": "newData.hasChild('lastTimestamp')",
           "lastTimestamp": { ".validate": "newData.isNumber() && newData.val() > 0" },
           "pinned": { ".validate": "newData.isBoolean()" },
@@ -152,7 +182,7 @@
             ".validate": "newData.isString() && newData.val() === auth.uid"
           },
           "type": {
-            ".validate": "newData.isString() && newData.val().matches(/^(text|image|video|audio)$/)"
+            ".validate": "newData.isString() && newData.val().matches(/^(text|image|video|audio|system)$/)"
           },
           "timestamp": {
             ".validate": "newData.isNumber() && newData.val() === now"
@@ -182,6 +212,21 @@
           "height": { ".validate": "newData.isNumber() && newData.val() > 0" },
           "durationMs": { ".validate": "newData.isNumber() && newData.val() >= 0" },
           "forwardedFrom": { ".validate": "newData.isString() && newData.val().length <= 128" },
+
+          "//event": "Only on system rows, and only in a group. `by` must be the author: the transcript's account of who did something has to match who wrote it.",
+          "event": {
+            ".validate": "newData.parent().child('type').val() === 'system' && root.child('chats').child($chatId).child('isGroup').val() === true && newData.hasChild('kind') && (!newData.hasChild('by') || newData.child('by').val() === auth.uid)",
+            "kind": {
+              ".validate": "newData.isString() && newData.val().matches(/^(group_created|members_added|member_removed|member_left|group_renamed|group_photo_changed|admin_granted|admin_revoked)$/)"
+            },
+            "by": { ".validate": "newData.isString() && newData.val() === auth.uid" },
+            "uid": { ".validate": "newData.isString() && newData.val().length <= 128" },
+            "name": { ".validate": "newData.isString() && newData.val().length <= 60" },
+            "uids": {
+              "$index": { ".validate": "newData.isString() && newData.val().length <= 128" }
+            },
+            "$other": { ".validate": false }
+          },
 
           "replyTo": {
             ".validate": "newData.hasChildren(['messageId', 'senderId', 'type', 'preview'])",

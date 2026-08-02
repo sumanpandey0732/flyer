@@ -6,6 +6,7 @@ import type {
   QueuedSend,
   ReplyRef,
   StarredRef,
+  SystemEvent,
   UserProfile,
 } from '@/src/config/types';
 import {
@@ -67,6 +68,7 @@ function normaliseMessage(id: string, chatId: string, raw: Record<string, unknow
     hiddenFor: (raw.hiddenFor as Record<string, boolean>) ?? {},
     replyTo: (raw.replyTo as ReplyRef | null) ?? null,
     forwardedFrom: (raw.forwardedFrom as string | null) ?? null,
+    event: (raw.event as SystemEvent | null) ?? null,
   };
 }
 
@@ -91,6 +93,13 @@ function normaliseChat(
     unread: (raw.unread as Record<string, number>) ?? {},
     pinned: flags.pinned,
     archived: flags.archived,
+    isGroup: raw.isGroup === true,
+    name: (raw.name as string | null) ?? null,
+    photoURL: (raw.photoURL as string | null) ?? null,
+    description: (raw.description as string | null) ?? null,
+    admins: (raw.admins as Record<string, boolean>) ?? {},
+    createdBy: (raw.createdBy as string | null) ?? null,
+    createdAt: (raw.createdAt as number) ?? 0,
   };
 }
 
@@ -283,7 +292,24 @@ export async function ensureChat(myUid: string, peerUid: string): Promise<string
 }
 
 export function peerOf(chat: ChatSummary, myUid: string): string | null {
+  if (chat.isGroup) return null;
   return Object.keys(chat.participants ?? {}).find((uid) => uid !== myUid) ?? null;
+}
+
+/**
+ * Everyone who needs their chat index bumped and unread badge incremented.
+ *
+ * Groups have no single peer, so the list comes from the chat's participants.
+ * Reading from the store rather than the database keeps the send path off the
+ * network: the sender is looking at the chat, so its participants are already
+ * subscribed and current.
+ */
+function recipientsFor(chatId: string, senderId: string, peerId: string | null): string[] {
+  const chat = appState.get().chats[chatId];
+  if (chat?.isGroup) {
+    return Object.keys(chat.participants ?? {}).filter((uid) => uid !== senderId);
+  }
+  return peerId ? [peerId] : [];
 }
 
 // --- sending -------------------------------------------------------------
@@ -291,7 +317,13 @@ export function peerOf(chat: ChatSummary, myUid: string): string | null {
 interface SendOptions {
   chatId: string;
   senderId: string;
-  peerId: string;
+  /**
+   * The other party in a 1:1 chat. Groups pass `recipients` instead; exactly one
+   * of the two is set.
+   */
+  peerId: string | null;
+  /** Every participant except the sender. Groups only. */
+  recipients?: string[];
   type: MessageType;
   text?: string | null;
   mediaUrl?: string | null;
@@ -301,11 +333,14 @@ interface SendOptions {
   durationMs?: number | null;
   replyTo?: ReplyRef | null;
   forwardedFrom?: string | null;
+  /** `system` messages only — the group event this row describes. */
+  event?: SystemEvent | null;
 }
 
-/** Writes the message and both chat-list indexes atomically. */
+/** Writes the message and every participant's chat-list index atomically. */
 async function commitMessage(opts: SendOptions, messageId: string): Promise<void> {
-  const { chatId, senderId, peerId } = opts;
+  const { chatId, senderId } = opts;
+  const recipients = opts.recipients ?? recipientsFor(chatId, senderId, opts.peerId);
 
   const payload = {
     senderId,
@@ -323,9 +358,10 @@ async function commitMessage(opts: SendOptions, messageId: string): Promise<void
     reactions: {},
     replyTo: opts.replyTo ?? null,
     forwardedFrom: opts.forwardedFrom ?? null,
+    event: opts.event ?? null,
   };
 
-  await fanOut({
+  const updates: Record<string, unknown> = {
     [Paths.message(chatId, messageId)]: payload,
     [`${Paths.chat(chatId)}/lastMessage`]: {
       text: previewFor(opts.type, opts.text ?? null),
@@ -337,17 +373,27 @@ async function commitMessage(opts: SendOptions, messageId: string): Promise<void
     // Leaf writes, not `{lastTimestamp}` objects: setting the parent would
     // replace the node and wipe the owner's `pinned`/`archived` flags.
     [`${Paths.userChat(senderId, chatId)}/lastTimestamp`]: serverTimestamp(),
-    [`${Paths.userChat(peerId, chatId)}/lastTimestamp`]: serverTimestamp(),
-  });
+  };
 
-  // Separate transaction: a fan-out cannot express "increment" atomically.
-  await increment(Paths.unread(chatId, peerId), 1).catch(() => {});
+  for (const uid of recipients) {
+    updates[`${Paths.userChat(uid, chatId)}/lastTimestamp`] = serverTimestamp();
+  }
+
+  await fanOut(updates);
+
+  // Separate transactions: a fan-out cannot express "increment" atomically.
+  // Failures are swallowed per-recipient — a lagging badge beats a send that
+  // reports failure after the message is already delivered.
+  await Promise.all(
+    recipients.map((uid) => increment(Paths.unread(chatId, uid), 1).catch(() => {}))
+  );
 }
 
 export async function sendText(
   chatId: string,
   senderId: string,
-  peerId: string,
+  /** Null in a group, where recipients come from the chat's participants. */
+  peerId: string | null,
   text: string,
   replyTo: ReplyRef | null = null
 ): Promise<void> {
@@ -376,6 +422,7 @@ export async function sendText(
         hiddenFor: {},
         replyTo,
         forwardedFrom: null,
+        event: null,
       },
       localUri: null,
       attempts: 0,
@@ -395,7 +442,8 @@ export async function sendText(
 export async function sendMedia(
   chatId: string,
   senderId: string,
-  peerId: string,
+  /** Null in a group, where recipients come from the chat's participants. */
+  peerId: string | null,
   media: {
     uri: string;
     type: 'image' | 'video' | 'audio';
@@ -424,6 +472,7 @@ export async function sendMedia(
     hiddenFor: {},
     replyTo,
     forwardedFrom: null,
+    event: null,
   };
 
   // Optimistic bubble with a progress spinner.
@@ -487,8 +536,12 @@ export async function sendMedia(
 registerSender(async (item: QueuedSend) => {
   const chat = appState.get().chats[item.chatId];
   const myUid = item.draft.senderId;
+  // Groups have no peer; `commitMessage` resolves their recipients from the
+  // participant list instead. Only a 1:1 chat with no peer is unreplayable.
   const peerId = chat ? peerOf(chat, myUid) : null;
-  if (!peerId) throw new Error(`Cannot resolve peer for chat ${item.chatId}`);
+  if (!peerId && !chat?.isGroup) {
+    throw new Error(`Cannot resolve peer for chat ${item.chatId}`);
+  }
 
   let mediaUrl = item.draft.mediaUrl;
   let thumb = item.draft.thumbUrl;
@@ -865,7 +918,7 @@ export function searchChats(
 
   return chats.filter((chat) => {
     const peer = peerOf(chat, myUid);
-    const name = peer ? (users[peer]?.name ?? '') : '';
+    const name = chat.isGroup ? (chat.name ?? '') : peer ? (users[peer]?.name ?? '') : '';
     const last = chat.lastMessage?.text ?? '';
     return name.toLowerCase().includes(q) || last.toLowerCase().includes(q);
   });
@@ -890,21 +943,38 @@ export function dayLabel(ts: number): string {
 
 export type ChatListItem =
   | { kind: 'day'; id: string; label: string }
+  | { kind: 'unread'; id: string; count: number }
   | { kind: 'message'; id: string; message: Message; showTail: boolean };
 
 /**
  * Flattens messages into a render list with date separators, and marks which
  * bubbles get a tail (last in a run from the same sender).
+ *
+ * `unreadCount` inserts the "unread messages" divider above the first message
+ * the user has not seen. It is passed in rather than derived here because the
+ * count has to be captured when the chat opens: `markSeen` clears it a moment
+ * later, and a divider that vanishes while you are reading is worse than none.
  */
-export function buildMessageList(messages: Message[]): ChatListItem[] {
+export function buildMessageList(messages: Message[], unreadCount = 0): ChatListItem[] {
   const items: ChatListItem[] = [];
   let lastDay = '';
+
+  // The unread run is the tail of the list, so the divider goes before the
+  // last `unreadCount` messages. Clamped because the count comes from a
+  // counter the peer increments and this list may be a partial page.
+  const dividerAt =
+    unreadCount > 0 && unreadCount <= messages.length ? messages.length - unreadCount : -1;
 
   messages.forEach((message, i) => {
     const label = dayLabel(message.timestamp);
     if (label !== lastDay) {
       items.push({ kind: 'day', id: `day-${label}-${message.id}`, label });
       lastDay = label;
+    }
+
+    // After the day pill: the divider belongs immediately above the message.
+    if (i === dividerAt) {
+      items.push({ kind: 'unread', id: `unread-${message.id}`, count: unreadCount });
     }
 
     const next = messages[i + 1];

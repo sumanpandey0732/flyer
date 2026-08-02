@@ -42,8 +42,12 @@ export default function ArchivedScreen() {
     if (!myUid) return;
     const live = watched.current;
     for (const chat of chats) {
-      const peer = peerOf(chat, myUid);
-      if (peer && !live.has(peer)) live.set(peer, listenToUser(peer));
+      const uids = chat.isGroup
+        ? Object.keys(chat.participants ?? {}).filter((uid) => uid !== myUid)
+        : [peerOf(chat, myUid)];
+      for (const uid of uids) {
+        if (uid && !live.has(uid)) live.set(uid, listenToUser(uid));
+      }
     }
   }, [chats, myUid]);
 

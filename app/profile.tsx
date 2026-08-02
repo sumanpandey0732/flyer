@@ -1,12 +1,15 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/src/theme/ThemeProvider';
@@ -14,9 +17,15 @@ import { Avatar } from '@/src/components/Avatar';
 import { Icon } from '@/src/components/Icon';
 import { Pressable } from '@/src/components/Pressable';
 import { ListRow } from '@/src/components/ListRow';
+import { ActionSheet, type SheetAction } from '@/src/components/ActionSheet';
 import { alertError, confirm } from '@/src/components/Confirm';
 import { Paths, update } from '@/src/services/FirebaseService';
-import { pickFromLibrary, uploadToCloudinary } from '@/src/services/MediaManager';
+import {
+  captureWithCamera,
+  pickFromLibrary,
+  transformed,
+  uploadToCloudinary,
+} from '@/src/services/MediaManager';
 import { deleteAccount, signOut } from '@/src/services/AuthManager';
 import { getToken, unregisterToken } from '@/src/services/NotificationManager';
 import { useAppStore } from '@/src/services/StateManager';
@@ -56,6 +65,8 @@ export default function ProfileScreen() {
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [handleCheck, setHandleCheck] = useState<HandleCheck>({ kind: 'idle' });
+  const [photoSheet, setPhotoSheet] = useState(false);
+  const [photoViewer, setPhotoViewer] = useState(false);
 
   const uid = me?.uid ?? null;
 
@@ -153,27 +164,94 @@ export default function ProfileScreen() {
     }
   }, [uid, editing, draft, patchCurrentUser]);
 
-  const changePhoto = useCallback(async () => {
+  const changePhoto = useCallback(
+    async (source: 'camera' | 'library') => {
+      if (!uid || uploadProgress !== null) return;
+      try {
+        const picked =
+          source === 'camera'
+            ? await captureWithCamera('image')
+            : (await pickFromLibrary('image'))[0];
+        if (!picked) return;
+
+        setUploadProgress(0);
+        const uploaded = await uploadToCloudinary(picked.uri, 'image', (fraction) =>
+          setUploadProgress(fraction)
+        );
+
+        await update(Paths.user(uid), { photoURL: uploaded.url });
+        patchCurrentUser({ photoURL: uploaded.url });
+      } catch (e) {
+        console.warn('[Flyer/profile] photo update failed', e);
+        alertError('Could not update photo', e instanceof Error ? e.message : undefined);
+      } finally {
+        setUploadProgress(null);
+      }
+    },
+    [uid, uploadProgress, patchCurrentUser]
+  );
+
+  const removePhoto = useCallback(async () => {
     if (!uid || uploadProgress !== null) return;
+
+    const ok = await confirm({
+      title: 'Remove profile photo?',
+      message: 'Your contacts will see your initials instead.',
+      confirmLabel: 'Remove',
+      destructive: true,
+    });
+    if (!ok) return;
+
     try {
-      const picked = await pickFromLibrary('image');
-      const first = picked[0];
-      if (!first) return;
-
-      setUploadProgress(0);
-      const uploaded = await uploadToCloudinary(first.uri, 'image', (fraction) =>
-        setUploadProgress(fraction)
-      );
-
-      await update(Paths.user(uid), { photoURL: uploaded.url });
-      patchCurrentUser({ photoURL: uploaded.url });
+      // Written as null, not deleted: `update` with an absent key leaves the old
+      // value in place, and every reader already treats null as "no photo".
+      await update(Paths.user(uid), { photoURL: null });
+      patchCurrentUser({ photoURL: null });
     } catch (e) {
-      console.warn('[Flyer/profile] photo update failed', e);
-      alertError('Could not update photo', e instanceof Error ? e.message : undefined);
-    } finally {
-      setUploadProgress(null);
+      console.warn('[Flyer/profile] photo remove failed', e);
+      alertError('Could not remove photo', 'Check your connection and try again.');
     }
   }, [uid, uploadProgress, patchCurrentUser]);
+
+  /**
+   * Tapping the avatar opens a sheet rather than the picker directly: with a
+   * photo set, viewing it is the more common intent than replacing it.
+   */
+  const photoActions: SheetAction[] = useMemo(() => {
+    const list: SheetAction[] = [];
+    if (me?.photoURL) {
+      list.push({
+        key: 'view',
+        label: 'View photo',
+        icon: 'people',
+        onPress: () => setPhotoViewer(true),
+      });
+    }
+    list.push(
+      {
+        key: 'camera',
+        label: 'Take photo',
+        icon: 'camera',
+        onPress: () => void changePhoto('camera'),
+      },
+      {
+        key: 'library',
+        label: 'Choose from gallery',
+        icon: 'attach',
+        onPress: () => void changePhoto('library'),
+      }
+    );
+    if (me?.photoURL) {
+      list.push({
+        key: 'remove',
+        label: 'Remove photo',
+        icon: 'trash',
+        destructive: true,
+        onPress: () => void removePhoto(),
+      });
+    }
+    return list;
+  }, [me?.photoURL, changePhoto, removePhoto]);
 
   const onSignOut = useCallback(async () => {
     if (!uid || signingOut) return;
@@ -370,13 +448,13 @@ export default function ProfileScreen() {
       >
         <View style={styles.avatarArea}>
           <Pressable
-            onPress={() => void changePhoto()}
+            onPress={() => setPhotoSheet(true)}
             disabled={uploadProgress !== null}
             accessibilityRole="button"
-            accessibilityLabel="Change profile photo"
+            accessibilityLabel="Profile photo"
             style={styles.avatarPress}
           >
-            <Avatar uri={me.photoURL} name={me.name ?? ''} uid={me.uid} size={148} />
+            <Avatar uri={me.photoURL} name={me.name ?? ''} uid={me.uid} size={148} showPhoto />
 
             {uploadProgress !== null ? (
               <View style={[styles.uploadOverlay, { backgroundColor: theme.colors.overlay }]}>
@@ -437,6 +515,44 @@ export default function ProfileScreen() {
           />
         </View>
       </ScrollView>
+
+      <ActionSheet
+        visible={photoSheet}
+        title="Profile photo"
+        actions={photoActions}
+        onClose={() => setPhotoSheet(false)}
+      />
+
+      <Modal
+        visible={photoViewer}
+        transparent={false}
+        animationType="fade"
+        onRequestClose={() => setPhotoViewer(false)}
+        statusBarTranslucent
+      >
+        <StatusBar barStyle="light-content" />
+        <View style={styles.viewer}>
+          <View style={[styles.viewerHeader, { paddingTop: insets.top + 6 }]}>
+            <Pressable
+              onPress={() => setPhotoViewer(false)}
+              round={42}
+              accessibilityLabel="Close photo"
+            >
+              <Icon name="close" size={20} color="#FFFFFF" />
+            </Pressable>
+            <Text style={styles.viewerTitle}>{me?.name ?? 'Profile photo'}</Text>
+          </View>
+
+          {me?.photoURL ? (
+            <Image
+              source={{ uri: transformed(me.photoURL, { width: 1200 }) }}
+              style={styles.viewerImage}
+              contentFit="contain"
+              transition={200}
+            />
+          ) : null}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -533,7 +649,19 @@ const styles = StyleSheet.create({
     maxHeight: 120,
   },
   editActions: { flexDirection: 'row', alignItems: 'center', gap: 18, marginTop: 10 },
-  counter: { flex: 1, fontSize: 12 },
+
+  // Always black, never themed: light chrome behind a photo washes it out, and
+  // both platforms' native viewers do the same.
+  viewer: { flex: 1, backgroundColor: '#000000' },
+  viewerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingBottom: 8,
+  },
+  viewerTitle: { color: '#FFFFFF', fontSize: 16.5, fontWeight: '600', marginLeft: 4 },
+  viewerImage: { flex: 1, width: '100%' },  counter: { flex: 1, fontSize: 12 },
   editButton: { paddingVertical: 6, paddingHorizontal: 4, minWidth: 54, alignItems: 'center' },
   editButtonLabel: { fontSize: 15, fontWeight: '600' },
   actions: { marginTop: 24 },

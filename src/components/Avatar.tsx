@@ -4,6 +4,7 @@ import { Image } from 'expo-image';
 import { avatarColor, initialsOf } from '@/src/theme/theme';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { thumbUrl } from '@/src/services/MediaManager';
+import { Icon } from './Icon';
 
 interface Props {
   uri?: string | null;
@@ -13,6 +14,11 @@ interface Props {
   online?: boolean;
   /** Suppresses the photo when the peer's privacy setting hides it. */
   showPhoto?: boolean;
+  /**
+   * Groups fall back to a people glyph rather than initials: "WE" for "Weekend
+   * Errands" reads like a person's monogram, which is the wrong signal.
+   */
+  group?: boolean;
 }
 
 export function Avatar({
@@ -22,6 +28,7 @@ export function Avatar({
   size = 48,
   online,
   showPhoto = true,
+  group = false,
 }: Props) {
   const theme = useTheme();
   const visible = showPhoto && uri;
@@ -55,9 +62,13 @@ export function Avatar({
             },
           ]}
         >
-          <Text style={[styles.initials, { fontSize: size * 0.36 }]}>
-            {initialsOf(name)}
-          </Text>
+          {group ? (
+            <Icon name="people" size={size * 0.52} color="#FFFFFF" />
+          ) : (
+            <Text style={[styles.initials, { fontSize: size * 0.36 }]}>
+              {initialsOf(name)}
+            </Text>
+          )}
         </View>
       )}
 

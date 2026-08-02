@@ -1,6 +1,29 @@
 /** Shared domain types. The RTDB shape is documented in database.rules.json. */
 
-export type MessageType = 'text' | 'image' | 'video' | 'audio';
+/**
+ * `system` is not something a user can send. It carries group events ("Ana added
+ * Ben", "Ana changed the group name") and renders as a centred pill rather than
+ * a bubble, which is why it lives in the same union as the sendable types.
+ */
+export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'system';
+
+/** Sendable subset — everything a composer can produce. */
+export type SendableMessageType = Exclude<MessageType, 'system'>;
+
+/**
+ * What a `system` message describes. Stored on the message as `event` so the
+ * label can be re-rendered in the reader's own language and with current names,
+ * rather than freezing English text at write time.
+ */
+export type SystemEvent =
+  | { kind: 'group_created'; by: string }
+  | { kind: 'members_added'; by: string; uids: string[] }
+  | { kind: 'member_removed'; by: string; uid: string }
+  | { kind: 'member_left'; uid: string }
+  | { kind: 'group_renamed'; by: string; name: string }
+  | { kind: 'group_photo_changed'; by: string }
+  | { kind: 'admin_granted'; by: string; uid: string }
+  | { kind: 'admin_revoked'; by: string; uid: string };
 
 export type CallType = 'voice' | 'video';
 
@@ -78,11 +101,19 @@ export interface Message {
   hiddenFor: Record<string, boolean>;
   replyTo: ReplyRef | null;
   forwardedFrom: string | null;
+  /** Set only on `system` messages; null on everything a user sent. */
+  event: SystemEvent | null;
   /** Client-only: set for messages sitting in the offline queue. */
   pending?: boolean;
   /** Client-only: set when a queued send exhausted its retries. */
   failed?: boolean;
 }
+
+/** Upper bound on a group's membership, matching the rules' own cap. */
+export const GROUP_MAX_MEMBERS = 256;
+
+export const GROUP_NAME_MAX = 60;
+export const GROUP_DESCRIPTION_MAX = 300;
 
 export interface ChatSummary {
   id: string;
@@ -106,6 +137,29 @@ export interface ChatSummary {
    */
   pinned: boolean;
   archived: boolean;
+
+  /*
+   * --- group fields ------------------------------------------------------
+   * Absent on 1:1 chats. `isGroup` is the discriminant rather than
+   * `participants.length > 2`: a group that has shrunk to two people is still a
+   * group, and must not start behaving like a direct chat.
+   */
+  isGroup: boolean;
+  /** Group display name. Null on 1:1, where the peer's own name is used. */
+  name: string | null;
+  photoURL: string | null;
+  description: string | null;
+  /** uid -> true. Admins can rename, change the photo, and add or remove. */
+  admins: Record<string, boolean>;
+  createdBy: string | null;
+  createdAt: number;
+}
+
+/** A group member with their profile resolved, ready to render in a list. */
+export interface GroupMember {
+  uid: string;
+  profile: UserProfile | null;
+  isAdmin: boolean;
 }
 
 export interface CallRecord {

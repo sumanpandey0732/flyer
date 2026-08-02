@@ -29,6 +29,7 @@ export interface Theme {
     success: string;
     overlay: string;
     chatWallpaper: string;
+    chatSelection: string;
     ripple: string;
     unreadBadge: string;
   };
@@ -78,6 +79,8 @@ export const lightTheme: Theme = {
     success: '#25D366',
     overlay: 'rgba(0,0,0,0.55)',
     chatWallpaper: '#EFE7DE',
+    /** Background of a selected bubble during multi-select, ~15% accent. */
+    chatSelection: 'rgba(0,128,105,0.12)',
     ripple: 'rgba(0,0,0,0.08)',
     unreadBadge: '#25D366',
   },
@@ -112,6 +115,7 @@ export const darkTheme: Theme = {
     success: '#00A884',
     overlay: 'rgba(0,0,0,0.7)',
     chatWallpaper: '#0B141A',
+    chatSelection: 'rgba(0,168,132,0.18)',
     ripple: 'rgba(255,255,255,0.08)',
     unreadBadge: '#00A884',
   },

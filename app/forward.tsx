@@ -33,9 +33,11 @@ export default function ForwardScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  const { chatId, messageId } = useLocalSearchParams<{
+  const { chatId, messageId, messageIds } = useLocalSearchParams<{
     chatId: string;
-    messageId: string;
+    messageId?: string;
+    /** Comma-separated, from the chat screen's selection mode. */
+    messageIds?: string;
   }>();
 
   const myUid = useAppStore((s) => s.currentUser?.uid) ?? null;
