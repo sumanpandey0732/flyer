@@ -263,6 +263,20 @@ export default function ChatScreen() {
     return listenToUser(peerUid);
   }, [peerUid]);
 
+  /*
+   * Groups need every member's profile: bubbles are labelled with the sender's
+   * name and system rows name whoever acted. Keyed on the joined uid list so
+   * the listeners are only rebuilt when membership actually changes.
+   */
+  const memberKey = groupMemberUids.join(',');
+  useEffect(() => {
+    if (!isGroup || !memberKey) return;
+    const offs = memberKey.split(',').map((uid) => listenToUser(uid));
+    return () => {
+      for (const off of offs) off();
+    };
+  }, [isGroup, memberKey]);
+
   // Reset the paged history whenever the conversation changes.
   useEffect(() => {
     setOlder([]);
