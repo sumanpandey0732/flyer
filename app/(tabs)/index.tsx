@@ -233,6 +233,12 @@ export default function ChatsScreen() {
   const overflowActions = useMemo<SheetAction[]>(
     () => [
       {
+        key: 'new-group',
+        label: 'New group',
+        icon: 'people',
+        onPress: () => router.push('/new-group'),
+      },
+      {
         key: 'starred',
         label: 'Starred messages',
         icon: 'star',

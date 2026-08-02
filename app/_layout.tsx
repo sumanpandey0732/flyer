@@ -191,6 +191,8 @@ function RootNavigator() {
         <Stack.Screen name="login" options={{ animation: 'fade' }} />
         <Stack.Screen name="chat/[chatId]" />
         <Stack.Screen name="user/[uid]" />
+        <Stack.Screen name="group/[chatId]" />
+        <Stack.Screen name="new-group" />
         <Stack.Screen name="add-contact" options={{ presentation: 'modal' }} />
         <Stack.Screen name="requests" />
         <Stack.Screen name="forward" options={{ presentation: 'modal' }} />

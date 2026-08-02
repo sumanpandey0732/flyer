@@ -159,6 +159,19 @@ export default function ContactsScreen() {
           term.trim() ? null : (
             <View>
               <Pressable
+                onPress={() => router.push('/new-group')}
+                accessibilityRole="button"
+                accessibilityLabel="New group"
+                style={[styles.actionRow, { borderBottomColor: theme.colors.border }]}
+              >
+                <View style={[styles.actionIcon, { backgroundColor: theme.colors.accent }]}>
+                  <Icon name="people" size={20} color={theme.colors.accentText} />
+                </View>
+                <Text style={[styles.actionLabel, { color: theme.colors.text }]}>New group</Text>
+                <Icon name="chevron" size={20} color={theme.colors.textMuted} />
+              </Pressable>
+
+              <Pressable
                 onPress={() => router.push('/requests')}
                 accessibilityRole="button"
                 accessibilityLabel={
