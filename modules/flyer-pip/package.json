@@ -1,0 +1,8 @@
+{
+  "name": "flyer-pip",
+  "version": "1.0.0",
+  "description": "Picture-in-Picture for Flyer video calls (Android).",
+  "main": "index.ts",
+  "private": true,
+  "platforms": ["android"]
+}
