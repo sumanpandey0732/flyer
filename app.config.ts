@@ -22,6 +22,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   userInterfaceStyle: 'automatic',
   newArchEnabled: true,
   assetBundlePatterns: ['**/*'],
+  // Regenerate with `python3 tools/gen-assets.py` if the mark ever changes.
+  icon: './assets/icon.png',
 
   ios: {
     bundleIdentifier: PACKAGE,
@@ -68,6 +70,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     'expo-router',
     '@react-native-firebase/app',
     '@react-native-firebase/auth',
+    './plugins/withFlyerNotificationIcon',
     '@config-plugins/react-native-webrtc',
     './plugins/withFlyerCallKeep',
     [

@@ -15,6 +15,11 @@ export type CallState =
 export interface UserProfile {
   uid: string;
   name: string;
+  /**
+   * Lowercase handle, unique across the app. Nullable because accounts created
+   * before usernames existed have none until the owner picks one.
+   */
+  username: string | null;
   email: string;
   photoURL: string | null;
   about: string;

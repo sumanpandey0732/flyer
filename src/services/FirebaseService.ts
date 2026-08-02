@@ -39,6 +39,12 @@ export const Paths = {
   userTokens: (uid: string) => `fcmTokens/${uid}`,
   userToken: (uid: string, token: string) => `fcmTokens/${uid}/${token}`,
 
+  // Reverse index for handle lookup and, more importantly, uniqueness: RTDB has
+  // no unique constraint, so the claim is the write to this node succeeding.
+  usernames: () => 'usernames',
+  username: (handle: string) => `usernames/${handle}`,
+  userUsername: (uid: string) => `users/${uid}/username`,
+
   chat: (chatId: string) => `chats/${chatId}`,
   chats: () => 'chats',
   userChats: (uid: string) => `userChats/${uid}`,

@@ -23,6 +23,7 @@
     "@react-native-firebase/functions": "^21.13.0",
     "@react-native-firebase/messaging": "^21.13.0",
     "@react-native-google-signin/google-signin": "^13.2.0",
+    "@react-navigation/bottom-tabs": "^7.18.14",
     "expo": "~53.0.0",
     "expo-application": "~6.1.4",
     "expo-av": "~15.1.4",

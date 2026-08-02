@@ -15,6 +15,7 @@ import * as Notifications from '@/src/services/NotificationManager';
 import { startPresence, stopPresence } from '@/src/services/PresenceManager';
 import { CallManager } from '@/src/services/CallManager';
 import { listenToChats, listenToBlocks, listenToUser } from '@/src/services/ChatEngine';
+import { listenToContacts, listenToRequests } from '@/src/services/ContactService';
 import { startOutbox, stopOutbox } from '@/src/services/OfflineQueue';
 import { hydrateSmartReply } from '@/src/services/SmartReplyService';
 import { Paths, onValue } from '@/src/services/FirebaseService';
@@ -127,13 +128,15 @@ function RootNavigator() {
       const offChats = listenToChats(user.uid);
       const offBlocks = listenToBlocks(user.uid);
       const offSelf = listenToUser(user.uid);
+      const offContacts = listenToContacts(user.uid);
+      const offRequests = listenToRequests(user.uid);
 
       startPresence(user.uid);
       startOutbox();
       CallManager.attach(user.uid);
       void Notifications.start(user.uid);
 
-      sessionTeardown = [offMe, offChats, offBlocks, offSelf];
+      sessionTeardown = [offMe, offChats, offBlocks, offSelf, offContacts, offRequests];
 
       await SplashScreen.hideAsync().catch(() => {});
     });
@@ -188,7 +191,8 @@ function RootNavigator() {
         <Stack.Screen name="login" options={{ animation: 'fade' }} />
         <Stack.Screen name="chat/[chatId]" />
         <Stack.Screen name="user/[uid]" />
-        <Stack.Screen name="contacts" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="add-contact" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="requests" />
         <Stack.Screen name="forward" options={{ presentation: 'modal' }} />
         <Stack.Screen name="profile" />
         <Stack.Screen name="settings" />

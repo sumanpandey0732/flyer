@@ -198,6 +198,11 @@ export default function UserProfileScreen() {
           <Text style={[styles.name, { color: theme.colors.text }]}>
             {peer.name ?? 'Flyer user'}
           </Text>
+          {peer.username ? (
+            <Text style={[styles.handle, { color: theme.colors.textMuted }]}>
+              @{peer.username}
+            </Text>
+          ) : null}
           {presence ? (
             <Text style={[styles.presence, { color: theme.colors.textMuted }]}>{presence}</Text>
           ) : null}
@@ -330,6 +335,7 @@ const styles = StyleSheet.create({
   headerTitle: { color: '#FFFFFF', fontSize: 19, fontWeight: '600', marginLeft: 4 },
   hero: { alignItems: 'center', paddingTop: 28, paddingBottom: 24, gap: 6 },
   name: { fontSize: 24, fontWeight: '600', marginTop: 18, textAlign: 'center' },
+  handle: { fontSize: 14.5, marginTop: 4, textAlign: 'center' },
   presence: { fontSize: 14 },
   blockedPill: {
     flexDirection: 'row',

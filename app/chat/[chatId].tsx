@@ -9,6 +9,8 @@ import {
   Text,
   View,
   type ListRenderItemInfo,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from 'react-native';
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -39,6 +41,7 @@ import {
   clearChat,
   clearTyping,
   deleteMessage,
+  deleteMessageForMe,
   dropQueued,
   editMessage,
   isBlockedByPeer,
@@ -153,6 +156,7 @@ export default function ChatScreen() {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [starredIds, setStarredIds] = useState<Set<string>>(() => new Set());
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null);
+  const [scrolledUp, setScrolledUp] = useState(false);
   const [editing, setEditing] = useState<Message | null>(null);
   const [actionsFor, setActionsFor] = useState<Message | null>(null);
   const [viewing, setViewing] = useState<Message | null>(null);
@@ -186,6 +190,11 @@ export default function ChatScreen() {
 
   const iBlockedPeer = peerUid ? blockedMap[peerUid] === true : false;
   const muted = isChatMuted(chat, myUid ?? '');
+
+  // Only meaningful on the jump-to-latest badge: while the chat is open the
+  // read receipt clears this, so it is non-zero exactly when messages arrived
+  // while scrolled away from the bottom.
+  const unreadCount = myUid ? (chat?.unread?.[myUid] ?? 0) : 0;
   const privacy = peer?.privacy ?? DEFAULT_PRIVACY;
   const peerName = peer?.name ?? 'Flyer user';
 
@@ -323,6 +332,20 @@ export default function ChatScreen() {
   const scrollToBottom = useCallback(() => {
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
   }, []);
+
+  /**
+   * The jump-to-latest button. The list is inverted, so offset 0 *is* the
+   * bottom and "scrolled up" simply means a large offset. One screen height is
+   * the threshold WhatsApp uses: far enough that new messages are off-screen.
+   */
+  const onScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offset = e.nativeEvent.contentOffset.y;
+      const threshold = e.nativeEvent.layoutMeasurement.height * 0.8;
+      setScrolledUp(offset > threshold);
+    },
+    []
+  );
 
   const onScrollToIndexFailed = useCallback(
     (info: { index: number; averageItemLength: number }) => {
@@ -656,16 +679,47 @@ export default function ChatScreen() {
       });
     }
 
-    if (mine && !message.deleted && !message.pending) {
+    // "Delete for me" is offered on every message, including the peer's and
+    // including ones already deleted for everyone — it only hides your copy.
+    // "Delete for everyone" is the sender's alone.
+    if (!message.pending) {
       list.push({
-        key: 'delete',
-        label: 'Delete',
+        key: 'deleteForMe',
+        label: 'Delete for me',
         icon: 'trash',
         destructive: true,
         onPress: () => {
           void (async () => {
             const ok = await confirm({
-              title: 'Delete message?',
+              title: 'Delete for you?',
+              message: 'This removes the message from your device only.',
+              confirmLabel: 'Delete for me',
+              destructive: true,
+            });
+            if (!ok || !myUid) return;
+
+            try {
+              if (editing?.id === message.id) setEditing(null);
+              await deleteMessageForMe(chatId, message.id, myUid);
+            } catch (e) {
+              console.warn('[Flyer/chat] delete-for-me failed', e);
+              alertError('Could not delete message', 'Please try again.');
+            }
+          })();
+        },
+      });
+    }
+
+    if (mine && !message.deleted && !message.pending) {
+      list.push({
+        key: 'delete',
+        label: 'Delete for everyone',
+        icon: 'deleteForever',
+        destructive: true,
+        onPress: () => {
+          void (async () => {
+            const ok = await confirm({
+              title: 'Delete for everyone?',
               message: 'It will be replaced with "This message was deleted" for both of you.',
               confirmLabel: 'Delete',
               destructive: true,
@@ -1014,47 +1068,74 @@ export default function ChatScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={0}
       >
-        <FlatList
-          ref={listRef}
-          data={items}
-          inverted
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          onEndReached={onEndReached}
-          onEndReachedThreshold={0.35}
-          onScrollToIndexFailed={onScrollToIndexFailed}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-          initialNumToRender={20}
-          maxToRenderPerBatch={16}
-          windowSize={11}
-          contentContainerStyle={[
-            styles.listContent,
-            items.length === 0 ? styles.listContentEmpty : null,
-          ]}
-          // Inverted: the footer sits above the oldest bubble, the header below
-          // the newest one.
-          ListFooterComponent={
-            loadingOlder ? (
-              <View style={styles.loaderRow}>
-                <ActivityIndicator size="small" color={theme.colors.accent} />
+        {/* The jump button is absolutely positioned against this wrapper so it
+            sits above the last bubble, not over the composer. */}
+        <View style={styles.flex}>
+          <FlatList
+            ref={listRef}
+            data={items}
+            inverted
+            keyExtractor={(item) => item.id}
+            renderItem={renderItem}
+            onEndReached={onEndReached}
+            onEndReachedThreshold={0.35}
+            onScroll={onScroll}
+            scrollEventThrottle={64}
+            onScrollToIndexFailed={onScrollToIndexFailed}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            initialNumToRender={20}
+            maxToRenderPerBatch={16}
+            windowSize={11}
+            contentContainerStyle={[
+              styles.listContent,
+              items.length === 0 ? styles.listContentEmpty : null,
+            ]}
+            // Inverted: the footer sits above the oldest bubble, the header below
+            // the newest one.
+            ListFooterComponent={
+              loadingOlder ? (
+                <View style={styles.loaderRow}>
+                  <ActivityIndicator size="small" color={theme.colors.accent} />
+                </View>
+              ) : null
+            }
+            ListHeaderComponent={peerTyping ? <TypingIndicator /> : null}
+            ListEmptyComponent={
+              <View style={styles.empty}>
+                <Icon name="send" size={40} color={theme.colors.textFaint} />
+                <Text style={[styles.emptyTitle, { color: theme.colors.text }]}>
+                  No messages yet
+                </Text>
+                <Text style={[styles.emptyBody, { color: theme.colors.textMuted }]}>
+                  Say hello to {peerName}. Messages are delivered as soon as they are
+                  online.
+                </Text>
               </View>
-            ) : null
-          }
-          ListHeaderComponent={peerTyping ? <TypingIndicator /> : null}
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <Icon name="send" size={40} color={theme.colors.textFaint} />
-              <Text style={[styles.emptyTitle, { color: theme.colors.text }]}>
-                No messages yet
-              </Text>
-              <Text style={[styles.emptyBody, { color: theme.colors.textMuted }]}>
-                Say hello to {peerName}. Messages are delivered as soon as they are
-                online.
-              </Text>
-            </View>
-          }
-        />
+            }
+          />
+
+          {scrolledUp ? (
+            <Pressable
+              onPress={scrollToBottom}
+              accessibilityRole="button"
+              accessibilityLabel="Scroll to latest messages"
+              style={[
+                styles.jumpButton,
+                { backgroundColor: theme.colors.bgElevated, borderColor: theme.colors.border },
+              ]}
+            >
+              <Icon name="chevronDown" size={24} color={theme.colors.textMuted} />
+              {unreadCount > 0 ? (
+                <View style={[styles.jumpBadge, { backgroundColor: theme.colors.unreadBadge }]}>
+                  <Text style={[styles.jumpBadgeText, { color: theme.colors.accentText }]}>
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </Text>
+                </View>
+              ) : null}
+            </Pressable>
+          ) : null}
+        </View>
 
         {!disabledReason ? (
           <SmartReplyBar
@@ -1242,6 +1323,34 @@ const styles = StyleSheet.create({
 
   listContent: { paddingVertical: 8 },
   listContentEmpty: { flexGrow: 1, justifyContent: 'center' },
+  jumpButton: {
+    position: 'absolute',
+    right: 14,
+    bottom: 12,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  jumpBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -4,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  jumpBadgeText: { fontSize: 11.5, fontWeight: '700' },
   loaderRow: { paddingVertical: 14, alignItems: 'center' },
 
   dayRow: { alignItems: 'center', marginVertical: 8 },

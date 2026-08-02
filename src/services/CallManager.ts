@@ -17,6 +17,7 @@ import {
   type Unsubscribe,
 } from './FirebaseService';
 import { WebRTCManager } from './WebRTCManager';
+import type { AudioRoute } from './AudioRoute';
 import * as CallKeep from './CallKeepService';
 import { appState } from './StateManager';
 import { ensureCallPermissions } from './PermissionManager';
@@ -509,6 +510,16 @@ class CallManagerImpl {
     const next = !call.speakerOn;
     this.rtc?.setSpeaker(next);
     appState.get().patchCall({ speakerOn: next });
+  }
+
+  /**
+   * Pick an explicit output. `speakerOn` is kept in sync so the speaker button
+   * reflects a route chosen from the picker instead of contradicting it.
+   */
+  setAudioRoute(route: AudioRoute) {
+    if (!appState.get().activeCall) return;
+    this.rtc?.setAudioRoute(route);
+    appState.get().patchCall({ speakerOn: route === 'SPEAKER_PHONE' });
   }
 
   async switchCamera() {

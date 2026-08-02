@@ -12,6 +12,10 @@
         "name": {
           ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 64"
         },
+        "username": {
+          "//": "Lowercase handle. Uniqueness is enforced by the `usernames` index, not here — this field only has to match the claim. The check walks up via newData rather than `root` because `root` is the pre-write state, and the claim is written in the same fan-out as this field.",
+          ".validate": "newData.isString() && newData.val().matches(/^[a-z0-9_.]{3,24}$/) && newData.parent().parent().parent().child('usernames').child(newData.val()).val() === $uid"
+        },
         "email": {
           ".validate": "newData.isString() && newData.val().length <= 254 && newData.val().matches(/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/)"
         },
@@ -39,6 +43,15 @@
           "$other": { ".validate": false }
         },
         "$other": { ".validate": false }
+      }
+    },
+
+    "usernames": {
+      "//": "handle -> uid. Readable so the app can check availability and resolve a handle to a profile. A claim may only be created if free, and only deleted by its owner — that pair is what makes handles unique without a server.",
+      ".read": "auth != null",
+      "$handle": {
+        ".write": "auth != null && ((!data.exists() && newData.val() === auth.uid) || (data.val() === auth.uid && !newData.exists()))",
+        ".validate": "newData.isString() && $handle.matches(/^[a-z0-9_.]{3,24}$/)"
       }
     },
 

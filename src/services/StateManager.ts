@@ -60,6 +60,11 @@ interface AppState {
   networkStatus: NetworkStatus;
   pendingCount: number;
 
+  // --- contacts ---
+  contacts: Contact[];
+  /** Incoming and outgoing pending requests share one list. */
+  requests: ContactRequest[];
+
   // --- prefs ---
   themeMode: 'system' | 'light' | 'dark';
   blocked: Record<string, boolean>;
@@ -113,6 +118,8 @@ const initial = {
   pendingCount: 0,
   themeMode: 'system' as 'system' | 'light' | 'dark',
   blocked: {} as Record<string, boolean>,
+  contacts: [] as Contact[],
+  requests: [] as ContactRequest[],
 };
 
 /** Messages are kept sorted ascending; dedup by id (server echo vs local). */
@@ -191,6 +198,9 @@ export const useAppStore = create<AppState>((set) => ({
   setThemeMode: (themeMode) => set({ themeMode }),
   setBlocked: (blocked) => set({ blocked }),
 
+  setContacts: (contacts) => set({ contacts }),
+  setRequests: (requests) => set({ requests }),
+
   reset: () => set({ ...initial, authReady: true }),
 }));
 
@@ -243,3 +253,13 @@ export const selectPeerTyping = (chatId: string, myUid: string) => (s: AppState)
   const cutoff = Date.now() - 6000;
   return Object.entries(map).some(([uid, ts]) => uid !== myUid && ts > cutoff);
 };
+
+export const selectIncomingRequests = (s: AppState): ContactRequest[] =>
+  s.requests.filter((r) => r.direction === 'incoming');
+
+export const selectOutgoingRequests = (s: AppState): ContactRequest[] =>
+  s.requests.filter((r) => r.direction === 'outgoing');
+
+/** Drives the badge on the Contacts tab. */
+export const selectIncomingRequestCount = (s: AppState): number =>
+  s.requests.reduce((n, r) => n + (r.direction === 'incoming' ? 1 : 0), 0);

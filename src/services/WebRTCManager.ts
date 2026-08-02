@@ -9,6 +9,7 @@ import {
 } from 'react-native-webrtc';
 import InCallManager from 'react-native-incall-manager';
 import { Ice, Limits } from '@/src/config/env';
+import { AudioRouteManager, type AudioRoute } from './AudioRoute';
 
 // Installs RTCPeerConnection & friends onto global, which the adapter-style
 // code paths inside react-native-webrtc expect.
@@ -129,6 +130,11 @@ export class WebRTCManager {
     InCallManager.start({ media: 'audio' });
     InCallManager.setForceSpeakerphoneOn(this.isVideo);
     if (!this.isVideo) InCallManager.setKeepScreenOn(false);
+
+    // Start observing after `start()`, not before: the native audio manager only
+    // begins reporting devices once it owns audio focus, so a listener attached
+    // earlier would miss the initial device list.
+    AudioRouteManager.start();
 
     return stream;
   }
@@ -306,7 +312,14 @@ export class WebRTCManager {
   }
 
   setSpeaker(on: boolean) {
-    InCallManager.setForceSpeakerphoneOn(on);
+    // Goes through the route controller rather than straight to
+    // `setForceSpeakerphoneOn` so that turning the speaker off lands back on a
+    // connected headset instead of the earpiece.
+    void AudioRouteManager.select(AudioRouteManager.nextForSpeakerToggle(!on));
+  }
+
+  setAudioRoute(route: AudioRoute) {
+    void AudioRouteManager.select(route);
   }
 
   async switchCamera(): Promise<void> {
@@ -375,6 +388,7 @@ export class WebRTCManager {
     this.remoteStream = null;
     this.pendingCandidates = [];
 
+    AudioRouteManager.stop();
     InCallManager.stop();
     InCallManager.setKeepScreenOn(false);
   }

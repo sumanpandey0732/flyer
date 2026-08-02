@@ -7,6 +7,7 @@ import {
 import { Env } from '@/src/config/env';
 import { DEFAULT_PRIVACY, type UserProfile } from '@/src/config/types';
 import { Paths, fanOut, readOnce, serverTimestamp, update } from './FirebaseService';
+import { claimInitialUsername, releaseUsername } from './UsernameService';
 
 /**
  * AuthManager — Google Sign-In only.
@@ -88,9 +89,11 @@ export async function upsertProfile(user: FirebaseAuthTypes.User): Promise<void>
   const existing = await readOnce<UserProfile>(Paths.user(user.uid));
 
   if (!existing) {
+    const name = user.displayName ?? user.email?.split('@')[0] ?? 'Flyer user';
     await update(Paths.user(user.uid), {
       uid: user.uid,
-      name: user.displayName ?? user.email?.split('@')[0] ?? 'Flyer user',
+      name,
+      username: null,
       email: user.email ?? '',
       photoURL: user.photoURL ?? null,
       about: 'Available',
@@ -99,6 +102,14 @@ export async function upsertProfile(user: FirebaseAuthTypes.User): Promise<void>
       createdAt: serverTimestamp(),
       privacy: DEFAULT_PRIVACY,
     });
+    // After the profile exists, not before: the username field's rule checks the
+    // claim, and the claim is meaningless without a profile to point at.
+    // Best-effort — a null handle is valid and the profile screen can set one.
+    try {
+      await claimInitialUsername(user.uid, name, user.email ?? '');
+    } catch (e) {
+      console.warn('[Flyer/auth] could not auto-assign a username', e);
+    }
     return;
   }
 
@@ -110,6 +121,15 @@ export async function upsertProfile(user: FirebaseAuthTypes.User): Promise<void>
     privacy: existing.privacy ?? DEFAULT_PRIVACY,
     about: existing.about ?? 'Available',
   });
+
+  // Accounts that predate usernames get one on their next login.
+  if (!existing.username) {
+    try {
+      await claimInitialUsername(user.uid, existing.name ?? '', user.email ?? '');
+    } catch (e) {
+      console.warn('[Flyer/auth] could not backfill a username', e);
+    }
+  }
 }
 
 /** Restores a session silently on cold start. Returns null when signed out. */
@@ -153,6 +173,18 @@ export async function signOut(uid: string, token: string | null): Promise<void> 
 }
 
 export async function deleteAccount(uid: string): Promise<void> {
+  // Release the handle first and on its own: the rules only permit the owner to
+  // delete their claim, and once `users/{uid}` is gone there is no owner left to
+  // do it — the handle would be locked out of circulation forever.
+  const profile = await readOnce<UserProfile>(Paths.user(uid));
+  if (profile?.username) {
+    try {
+      await releaseUsername(profile.username);
+    } catch (e) {
+      console.warn('[Flyer/auth] could not release username on delete', e);
+    }
+  }
+
   await fanOut({
     [Paths.user(uid)]: null,
     [Paths.userTokens(uid)]: null,

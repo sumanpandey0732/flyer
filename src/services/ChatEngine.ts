@@ -198,6 +198,9 @@ export function listenToMessages(chatId: string, uid: string): Unsubscribe {
     const list = Object.entries(raw)
       .map(([id, value]) => normaliseMessage(id, chatId, value))
       .filter((m) => m.timestamp > clearedAt)
+      // "Delete for me" is a per-user flag, so it filters here rather than
+      // removing the row that the other participant still needs.
+      .filter((m) => !m.hiddenFor[uid])
       .sort((a, b) => a.timestamp - b.timestamp);
 
     // Queued-but-unsent messages are appended so they appear in the transcript
@@ -233,6 +236,7 @@ export async function loadOlderMessages(
   return Object.entries(raw)
     .map(([id, value]) => normaliseMessage(id, chatId, value))
     .filter((m) => m.timestamp > clearedAt)
+    .filter((m) => !m.hiddenFor[uid])
     .sort((a, b) => a.timestamp - b.timestamp);
 }
 
@@ -535,7 +539,14 @@ export async function editMessage(
   }
 }
 
-/** Soft delete — the row stays so both sides render "This message was deleted". */
+/**
+ * Delete for everyone. Soft delete — the row stays so both sides render
+ * "This message was deleted", which is what makes the deletion visible rather
+ * than silently rewriting history.
+ *
+ * Only the sender may do this; the rules enforce it too, so a tampered client
+ * gets a permission error rather than a wiped message.
+ */
 export async function deleteMessage(chatId: string, messageId: string): Promise<void> {
   await update(Paths.message(chatId, messageId), {
     deleted: true,
@@ -546,6 +557,70 @@ export async function deleteMessage(chatId: string, messageId: string): Promise<
 
   const messages = appState.get().messages[chatId] ?? [];
   if (messages[messages.length - 1]?.id === messageId) {
+    await update(`${Paths.chat(chatId)}/lastMessage`, {
+      text: 'This message was deleted',
+      deleted: true,
+    });
+  }
+}
+
+/**
+ * Delete for me. The message still exists for the other participant, so it can
+ * only be flagged, not removed — `hiddenFor/{uid}` is filtered out client-side
+ * by listenToMessages. Anyone may do this to any message, including received
+ * ones, which is the difference from delete-for-everyone.
+ */
+export async function deleteMessageForMe(
+  chatId: string,
+  messageId: string,
+  uid: string
+): Promise<void> {
+  await write(`${Paths.message(chatId, messageId)}/hiddenFor/${uid}`, true);
+  appState.get().removeMessage(chatId, messageId);
+}
+
+/** Bulk variant for multi-select. One fan-out, so the list settles once. */
+export async function deleteMessagesForMe(
+  chatId: string,
+  messageIds: string[],
+  uid: string
+): Promise<void> {
+  if (messageIds.length === 0) return;
+  const updates: Record<string, unknown> = {};
+  for (const id of messageIds) {
+    updates[`${Paths.message(chatId, id)}/hiddenFor/${uid}`] = true;
+  }
+  await fanOut(updates);
+  for (const id of messageIds) appState.get().removeMessage(chatId, id);
+}
+
+/** Multi-select delete-for-everyone. Skips anything I did not send. */
+export async function deleteMessagesForEveryone(
+  chatId: string,
+  messageIds: string[],
+  uid: string
+): Promise<void> {
+  const mine = new Set(
+    (appState.get().messages[chatId] ?? [])
+      .filter((m) => m.senderId === uid)
+      .map((m) => m.id)
+  );
+
+  const updates: Record<string, unknown> = {};
+  for (const id of messageIds) {
+    if (!mine.has(id)) continue;
+    const base = Paths.message(chatId, id);
+    updates[`${base}/deleted`] = true;
+    updates[`${base}/text`] = null;
+    updates[`${base}/mediaUrl`] = null;
+    updates[`${base}/thumbUrl`] = null;
+  }
+  if (Object.keys(updates).length === 0) return;
+  await fanOut(updates);
+
+  const messages = appState.get().messages[chatId] ?? [];
+  const latest = messages[messages.length - 1];
+  if (latest && messageIds.includes(latest.id) && mine.has(latest.id)) {
     await update(`${Paths.chat(chatId)}/lastMessage`, {
       text: 'This message was deleted',
       deleted: true,

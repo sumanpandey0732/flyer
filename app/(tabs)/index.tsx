@@ -358,7 +358,7 @@ export default function ChatsScreen() {
               title="No chats yet"
               body="Start a conversation and it will show up here."
               actionLabel="Start a chat"
-              onAction={() => router.push('/contacts')}
+              onAction={() => router.push('/(tabs)/contacts')}
             />
           ) : null
         }
@@ -370,7 +370,7 @@ export default function ChatsScreen() {
           { backgroundColor: theme.colors.accent, bottom: 24 },
         ]}
         haptic
-        onPress={() => router.push('/contacts')}
+        onPress={() => router.push('/(tabs)/contacts')}
         accessibilityLabel="New chat"
       >
         <Icon name="plus" size={26} color={theme.colors.accentText} />

@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   ScrollView,
@@ -20,11 +20,27 @@ import { pickFromLibrary, uploadToCloudinary } from '@/src/services/MediaManager
 import { deleteAccount, signOut } from '@/src/services/AuthManager';
 import { getToken, unregisterToken } from '@/src/services/NotificationManager';
 import { useAppStore } from '@/src/services/StateManager';
+import {
+  UsernameError,
+  isUsernameAvailable,
+  normaliseUsername,
+  setUsername,
+  validateUsername,
+} from '@/src/services/UsernameService';
 
 const NAME_MAX = 40;
 const ABOUT_MAX = 140;
+const USERNAME_MAX = 24;
 
-type EditField = 'name' | 'about';
+type EditField = 'name' | 'about' | 'username';
+
+/** Result of the live availability probe shown under the username field. */
+type HandleCheck =
+  | { kind: 'idle' }
+  | { kind: 'checking' }
+  | { kind: 'invalid'; reason: string }
+  | { kind: 'taken' }
+  | { kind: 'free' };
 
 export default function ProfileScreen() {
   const theme = useTheme();
@@ -39,13 +55,21 @@ export default function ProfileScreen() {
   const [saving, setSaving] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [signingOut, setSigningOut] = useState(false);
+  const [handleCheck, setHandleCheck] = useState<HandleCheck>({ kind: 'idle' });
 
   const uid = me?.uid ?? null;
 
   const beginEdit = useCallback(
     (field: EditField) => {
       if (!me) return;
-      setDraft(field === 'name' ? (me.name ?? '') : (me.about ?? ''));
+      setDraft(
+        field === 'name'
+          ? (me.name ?? '')
+          : field === 'about'
+            ? (me.about ?? '')
+            : (me.username ?? '')
+      );
+      setHandleCheck({ kind: 'idle' });
       setEditing(field);
     },
     [me]
@@ -54,7 +78,43 @@ export default function ProfileScreen() {
   const cancelEdit = useCallback(() => {
     setEditing(null);
     setDraft('');
+    setHandleCheck({ kind: 'idle' });
   }, []);
+
+  // Availability is advisory — the write still races — but showing "taken"
+  // before the user commits is the difference between a form and a guess.
+  useEffect(() => {
+    if (editing !== 'username' || !uid) return;
+
+    const handle = normaliseUsername(draft);
+    if (handle === (me?.username ?? '')) {
+      setHandleCheck({ kind: 'idle' });
+      return;
+    }
+
+    const invalid = validateUsername(handle);
+    if (invalid) {
+      setHandleCheck(handle ? { kind: 'invalid', reason: invalid } : { kind: 'idle' });
+      return;
+    }
+
+    let cancelled = false;
+    setHandleCheck({ kind: 'checking' });
+    const timer = setTimeout(async () => {
+      try {
+        const free = await isUsernameAvailable(handle, uid);
+        if (!cancelled) setHandleCheck(free ? { kind: 'free' } : { kind: 'taken' });
+      } catch {
+        // Offline: stay quiet rather than claim it is free.
+        if (!cancelled) setHandleCheck({ kind: 'idle' });
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [draft, editing, uid, me?.username]);
 
   const saveEdit = useCallback(async () => {
     if (!uid || !editing) return;
@@ -68,14 +128,26 @@ export default function ProfileScreen() {
 
     setSaving(true);
     try {
-      const patch = editing === 'name' ? { name: trimmed } : { about: trimmed };
-      await update(Paths.user(uid), patch);
-      patchCurrentUser(patch);
+      if (editing === 'username') {
+        // Goes through UsernameService, not a plain update: claiming a handle
+        // also has to release the old one and update the uniqueness index, and
+        // the rules reject the profile field on its own.
+        await setUsername(uid, trimmed);
+      } else {
+        const patch = editing === 'name' ? { name: trimmed } : { about: trimmed };
+        await update(Paths.user(uid), patch);
+        patchCurrentUser(patch);
+      }
       setEditing(null);
       setDraft('');
+      setHandleCheck({ kind: 'idle' });
     } catch (e) {
-      console.warn('[Flyer/profile] save failed', e);
-      alertError('Could not save', 'Check your connection and try again.');
+      if (e instanceof UsernameError) {
+        alertError('Could not set username', e.message);
+      } else {
+        console.warn('[Flyer/profile] save failed', e);
+        alertError('Could not save', 'Check your connection and try again.');
+      }
     } finally {
       setSaving(false);
     }
@@ -177,7 +249,13 @@ export default function ProfileScreen() {
 
   const renderEditable = (field: EditField, label: string, value: string, hint: string) => {
     const isEditing = editing === field;
-    const max = field === 'name' ? NAME_MAX : ABOUT_MAX;
+    const max =
+      field === 'name' ? NAME_MAX : field === 'about' ? ABOUT_MAX : USERNAME_MAX;
+    const isHandle = field === 'username';
+    // A handle that is invalid or already taken cannot be saved, so the button
+    // is disabled rather than letting the write fail with an alert.
+    const blocked =
+      isHandle && (handleCheck.kind === 'invalid' || handleCheck.kind === 'taken');
 
     return (
       <View style={[styles.block, { borderBottomColor: theme.colors.border }]}>
@@ -185,20 +263,31 @@ export default function ProfileScreen() {
 
         {isEditing ? (
           <View>
-            <TextInput
-              value={draft}
-              onChangeText={setDraft}
-              autoFocus
-              maxLength={max}
-              multiline={field === 'about'}
-              placeholder={hint}
-              placeholderTextColor={theme.colors.textFaint}
-              accessibilityLabel={`Edit ${label}`}
-              style={[
-                styles.input,
-                { color: theme.colors.text, borderBottomColor: theme.colors.accent },
-              ]}
-            />
+            <View style={styles.handleRow}>
+              {isHandle ? (
+                <Text style={[styles.at, { color: theme.colors.textMuted }]}>@</Text>
+              ) : null}
+              <TextInput
+                value={draft}
+                onChangeText={isHandle ? (v) => setDraft(normaliseUsername(v)) : setDraft}
+                autoFocus
+                maxLength={max}
+                multiline={field === 'about'}
+                autoCapitalize={isHandle ? 'none' : 'sentences'}
+                autoCorrect={!isHandle}
+                placeholder={hint}
+                placeholderTextColor={theme.colors.textFaint}
+                accessibilityLabel={`Edit ${label}`}
+                style={[
+                  styles.input,
+                  isHandle && styles.handleInput,
+                  { color: theme.colors.text, borderBottomColor: theme.colors.accent },
+                ]}
+              />
+            </View>
+
+            {isHandle ? <HandleHint check={handleCheck} /> : null}
+
             <View style={styles.editActions}>
               <Text style={[styles.counter, { color: theme.colors.textFaint }]}>
                 {draft.length}/{max}
@@ -216,15 +305,21 @@ export default function ProfileScreen() {
               </Pressable>
               <Pressable
                 onPress={() => void saveEdit()}
-                disabled={saving}
+                disabled={saving || blocked}
                 accessibilityRole="button"
                 accessibilityLabel={`Save ${label}`}
+                accessibilityState={{ disabled: saving || blocked }}
                 style={styles.editButton}
               >
                 {saving ? (
                   <ActivityIndicator size="small" color={theme.colors.accent} />
                 ) : (
-                  <Text style={[styles.editButtonLabel, { color: theme.colors.accent }]}>
+                  <Text
+                    style={[
+                      styles.editButtonLabel,
+                      { color: blocked ? theme.colors.textFaint : theme.colors.accent },
+                    ]}
+                  >
                     Save
                   </Text>
                 )}
@@ -234,7 +329,7 @@ export default function ProfileScreen() {
         ) : (
           <View style={styles.blockRow}>
             <Text style={[styles.blockValue, { color: theme.colors.text }]}>
-              {value || hint}
+              {value ? (isHandle ? `@${value}` : value) : hint}
             </Text>
             <Pressable
               round={40}
@@ -302,6 +397,12 @@ export default function ProfileScreen() {
         </View>
 
         {renderEditable('name', 'Name', me.name ?? '', 'Add your name')}
+        {renderEditable(
+          'username',
+          'Username',
+          me.username ?? '',
+          'Pick a username so people can find you'
+        )}
         {renderEditable('about', 'About', me.about ?? '', 'Add a few words about you')}
 
         <View style={[styles.block, { borderBottomColor: theme.colors.border }]}>
@@ -337,6 +438,41 @@ export default function ProfileScreen() {
         </View>
       </ScrollView>
     </View>
+  );
+}
+
+/** The one line under the username field that says whether it can be saved. */
+function HandleHint({ check }: { check: HandleCheck }) {
+  const theme = useTheme();
+
+  if (check.kind === 'idle') {
+    return (
+      <Text style={[styles.hint, { color: theme.colors.textFaint }]}>
+        Letters, numbers, dots and underscores. 3–24 characters.
+      </Text>
+    );
+  }
+
+  if (check.kind === 'checking') {
+    return (
+      <Text style={[styles.hint, { color: theme.colors.textFaint }]}>Checking…</Text>
+    );
+  }
+
+  if (check.kind === 'invalid') {
+    return <Text style={[styles.hint, { color: theme.colors.danger }]}>{check.reason}</Text>;
+  }
+
+  if (check.kind === 'taken') {
+    return (
+      <Text style={[styles.hint, { color: theme.colors.danger }]}>
+        That username is taken.
+      </Text>
+    );
+  }
+
+  return (
+    <Text style={[styles.hint, { color: theme.colors.success }]}>Available</Text>
   );
 }
 
@@ -385,6 +521,10 @@ const styles = StyleSheet.create({
   blockRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginTop: 8 },
   blockValue: { flex: 1, fontSize: 16, lineHeight: 22, marginTop: 8 },
   blockHint: { fontSize: 12, marginTop: 6, lineHeight: 17 },
+  handleRow: { flexDirection: 'row', alignItems: 'flex-end' },
+  at: { fontSize: 17, paddingBottom: 8, paddingRight: 2 },
+  handleInput: { flex: 1 },
+  hint: { fontSize: 12.5, marginTop: 6 },
   input: {
     fontSize: 16,
     paddingVertical: 8,
