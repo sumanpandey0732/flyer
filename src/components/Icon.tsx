@@ -65,6 +65,11 @@ const ICONS = {
   outgoingCall: ['material', 'call-made'],
   incomingCall: ['material', 'call-received'],
   pip: ['material', 'picture-in-picture-alt'],
+  // Audio routing. `earpiece` is the handset itself — Material has no earpiece
+  // glyph, and `phone-in-talk` is what every calling app uses for it.
+  earpiece: ['material', 'phone-in-talk'],
+  headset: ['material', 'headset'],
+  bluetooth: ['material', 'bluetooth-audio'],
 
   // delivery state
   check: ['material', 'check'],
@@ -83,7 +88,6 @@ const ICONS = {
   unpin: ['community', 'pin-off'],
   archive: ['material', 'archive'],
   unarchive: ['material', 'unarchive'],
-  bluetooth: ['material', 'bluetooth-audio'],
   mute: ['material', 'notifications-off'],
   unmute: ['material', 'notifications-none'],
   block: ['material', 'block'],

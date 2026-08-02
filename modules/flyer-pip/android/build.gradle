@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.flyer.chat'
+version = '1.0.0'
+
+android {
+  namespace "com.flyer.chat.pip"
+  defaultConfig {
+    minSdkVersion 24
+  }
+}
+
+dependencies {
+  // ComponentActivity, for addOnPictureInPictureModeChangedListener. Present
+  // transitively via appcompat, but declared here so the module compiles on its
+  // own terms rather than depending on what the app happens to pull in.
+  implementation 'androidx.activity:activity-ktx:1.9.3'
+}

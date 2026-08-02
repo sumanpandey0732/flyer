@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { BackHandler, StatusBar, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { AppState, BackHandler, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { Stack, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useKeepAwake } from 'expo-keep-awake';
@@ -7,10 +7,15 @@ import { RTCView, type MediaStream } from 'react-native-webrtc';
 import { darkTheme } from '@/src/theme/theme';
 import { useTheme } from '@/src/theme/ThemeProvider';
 import { Avatar } from '@/src/components/Avatar';
+import { AudioRouteSheet, ROUTE_ICON } from '@/src/components/AudioRouteSheet';
+import { DraggablePiP } from '@/src/components/DraggablePiP';
 import { Icon, type IconName } from '@/src/components/Icon';
 import { Pressable } from '@/src/components/Pressable';
 import { useAppStore } from '@/src/services/StateManager';
 import { CallManager, formatCallDuration } from '@/src/services/CallManager';
+import { useAudioRoutes } from '@/src/hooks/useAudioRoutes';
+import { routeLabel } from '@/src/services/AudioRoute';
+import { enterPipMode, isPipSupported, onPipModeChanged } from '@/src/services/PipService';
 import type { CallRecord } from '@/src/config/types';
 
 /**
@@ -25,6 +30,10 @@ const CONTROL_IDLE_BG = 'rgba(255,255,255,0.14)';
 const CONTROL_ACTIVE_BG = 'rgba(255,255,255,0.92)';
 const BAR_BG = 'rgba(0,0,0,0.35)';
 const PIP_BORDER = 'rgba(255,255,255,0.25)';
+
+/** Self-view tile. Portrait, because the camera feed is, and 9:16 of 108px. */
+const TILE_W = 108;
+const TILE_H = 168;
 
 const END_REASON_COPY: Record<NonNullable<CallRecord['endedReason']>, string> = {
   hangup: '',
@@ -66,6 +75,14 @@ export default function CallScreen() {
 
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [routeSheet, setRouteSheet] = useState(false);
+  const [inPip, setInPip] = useState(false);
+  /** Which feed is fullscreen. Tapping the tile swaps them, as WhatsApp does. */
+  const [selfFullscreen, setSelfFullscreen] = useState(false);
+
+  const { available: audioRoutes, selected: audioRoute } = useAudioRoutes();
+
+  useEffect(() => onPipModeChanged(setInPip), []);
 
   useEffect(() => {
     CallManager.setStreamHandlers(setLocalStream, setRemoteStream);
@@ -100,6 +117,28 @@ export default function CallScreen() {
   // second while connected, so reading Date.now() here is always fresh.
   const duration = call?.connectedAt ? formatCallDuration(call.connectedAt) : '';
 
+  const videoLive = call?.type === 'video' && call?.state === 'accepted';
+
+  /**
+   * Leaving a video call by going home should shrink it, not abandon it — the
+   * peer keeps sending video either way, so without this the user pays for a
+   * stream they cannot see. Requested on the transition to `background` rather
+   * than `inactive`: iOS fires `inactive` for a notification pull-down too, and
+   * on Android the window is between the home press and the activity stopping.
+   */
+  useEffect(() => {
+    if (!videoLive || !isPipSupported()) return;
+
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'background') enterPipMode({ width: 9, height: 16 });
+    });
+    return () => sub.remove();
+  }, [videoLive]);
+
+  const onEnterPip = useCallback(() => {
+    enterPipMode({ width: 9, height: 16 });
+  }, []);
+
   if (!call) return null;
 
   const isVideo = call.type === 'video';
@@ -129,36 +168,85 @@ export default function CallScreen() {
   const endedNote = call.endedReason ? END_REASON_COPY[call.endedReason] : '';
   const isOver = state === 'ended' || state === 'rejected';
 
+  // Which stream fills the screen, and which sits in the tile. The tile is only
+  // worth showing when there are genuinely two feeds to choose between.
+  const selfVisible = Boolean(localStream) && call.videoEnabled;
+  const fullscreenStream = selfFullscreen && selfVisible ? localStream : remoteStream;
+  const tileStream = selfFullscreen && selfVisible ? remoteStream : localStream;
+  const tileIsSelf = !selfFullscreen;
+  const showTile = showVideoStage && Boolean(tileStream) && (tileIsSelf ? selfVisible : true);
+
+  // A picker is only worth a tap when there is more than one thing to pick, and
+  // "earpiece + speaker" is the degenerate case the plain toggle already covers.
+  const hasRouteChoice = audioRoutes.length > 2;
+  const pipAvailable = isPipSupported();
+
+  // In PiP the window is a few hundred pixels wide: controls, names and timers
+  // are illegible and steal room from the only thing worth showing. Android
+  // expects an app to strip itself back to the content on entering PiP.
+  if (inPip) {
+    return (
+      <View style={[styles.root, { backgroundColor: surface.bg }]}>
+        <Stack.Screen options={{ headerShown: false }} />
+        {fullscreenStream ? (
+          <RTCView
+            streamURL={fullscreenStream.toURL()}
+            style={StyleSheet.absoluteFill}
+            objectFit="cover"
+            mirror={selfFullscreen && call.frontCamera}
+            zOrder={0}
+          />
+        ) : (
+          <View style={styles.pipFallback}>
+            <Avatar
+              uri={call.peer?.photoURL ?? null}
+              name={peerName}
+              uid={call.peerId}
+              size={72}
+              showPhoto={call.peer?.privacy?.showPhoto ?? true}
+            />
+          </View>
+        )}
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.root, { backgroundColor: surface.bg }]}>
       <Stack.Screen options={{ headerShown: false }} />
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
-      {showVideoStage && remoteStream ? (
+      {showVideoStage && fullscreenStream ? (
         <RTCView
-          streamURL={remoteStream.toURL()}
+          streamURL={fullscreenStream.toURL()}
           style={StyleSheet.absoluteFill}
           objectFit="cover"
+          mirror={selfFullscreen && call.frontCamera}
           zOrder={0}
         />
       ) : null}
 
-      {showVideoStage && localStream && call.videoEnabled ? (
-        <RTCView
-          streamURL={localStream.toURL()}
-          style={[
-            styles.pip,
-            {
-              top: insets.top + theme.spacing(3),
-              right: theme.spacing(4),
-              borderRadius: theme.radius.lg,
-              borderColor: PIP_BORDER,
-            },
-          ]}
-          objectFit="cover"
-          mirror={call.frontCamera}
-          zOrder={1}
-        />
+      {showTile && tileStream ? (
+        <DraggablePiP
+          width={TILE_W}
+          height={TILE_H}
+          onPress={() => setSelfFullscreen((v) => !v)}
+          topInset={theme.spacing(8)}
+          bottomInset={theme.spacing(24)}
+          style={{
+            borderRadius: theme.radius.lg,
+            borderWidth: 1,
+            borderColor: PIP_BORDER,
+          }}
+        >
+          <RTCView
+            streamURL={tileStream.toURL()}
+            style={StyleSheet.absoluteFill}
+            objectFit="cover"
+            mirror={tileIsSelf && call.frontCamera}
+            zOrder={1}
+          />
+        </DraggablePiP>
       ) : null}
 
       {call.reconnecting ? (
@@ -267,12 +355,24 @@ export default function CallScreen() {
               onPress={() => CallManager.toggleMic()}
             />
 
-            <ControlButton
-              icon="speaker"
-              label={call.speakerOn ? 'Turn off speaker' : 'Turn on speaker'}
-              active={call.speakerOn}
-              onPress={() => CallManager.toggleSpeaker()}
-            />
+            {/* With no headset connected the speaker toggle expresses every
+                available route, so the picker stays hidden and this behaves
+                exactly as it did before. */}
+            {hasRouteChoice ? (
+              <ControlButton
+                icon={ROUTE_ICON[audioRoute ?? 'EARPIECE']}
+                label={`Audio output: ${routeLabel(audioRoute ?? 'EARPIECE')}. Tap to change.`}
+                active={audioRoute === 'BLUETOOTH' || audioRoute === 'SPEAKER_PHONE'}
+                onPress={() => setRouteSheet(true)}
+              />
+            ) : (
+              <ControlButton
+                icon="speaker"
+                label={call.speakerOn ? 'Turn off speaker' : 'Turn on speaker'}
+                active={call.speakerOn}
+                onPress={() => CallManager.toggleSpeaker()}
+              />
+            )}
 
             {isVideo ? (
               <ControlButton
@@ -291,6 +391,10 @@ export default function CallScreen() {
               />
             ) : null}
 
+            {showVideoStage && pipAvailable ? (
+              <ControlButton icon="pip" label="Minimise call" onPress={onEnterPip} />
+            ) : null}
+
             <Pressable
               onPress={() => void CallManager.hangUp('hangup')}
               haptic
@@ -304,20 +408,21 @@ export default function CallScreen() {
           </View>
         )}
       </View>
+
+      <AudioRouteSheet
+        visible={routeSheet}
+        routes={audioRoutes}
+        selected={audioRoute}
+        onSelect={(route) => CallManager.setAudioRoute(route)}
+        onClose={() => setRouteSheet(false)}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  pip: {
-    position: 'absolute',
-    width: 180,
-    height: 120,
-    overflow: 'hidden',
-    borderWidth: 1,
-    zIndex: 2,
-  },
+  pipFallback: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   reconnecting: {
     position: 'absolute',
     alignSelf: 'center',
