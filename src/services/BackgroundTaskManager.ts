@@ -111,21 +111,33 @@ try {
  * is the JS entry point for that. CallKeep replays the answer via
  * `didLoadWithEvents` once React mounts, so we only need to keep the process
  * alive and ensure CallKeep is initialised.
+ *
+ * Wrapped for the same reason as the handler above: this file is imported from
+ * index.js on the very first JS tick, before React and before any error
+ * boundary. `registerHeadlessTask` throws if the task name is already taken
+ * (a fast kill-and-relaunch can re-evaluate this module while the previous
+ * registration is still live), and an uncaught throw here kills the process
+ * with no red box — splash, then straight back to the launcher. Losing
+ * lock-screen answer replay is a bug; failing to start at all is fatal.
  */
 if (Platform.OS === 'android') {
-  AppRegistry.registerHeadlessTask(
-    'RNCallKeepBackgroundMessage',
-    () => async (data: { name: string; callUUID?: string; handle?: string }) => {
-      try {
-        await CallKeep.setup();
-        if (data?.name === 'RNCallKeepPerformAnswerCallAction') {
-          CallKeep.toForeground();
+  try {
+    AppRegistry.registerHeadlessTask(
+      'RNCallKeepBackgroundMessage',
+      () => async (data: { name: string; callUUID?: string; handle?: string }) => {
+        try {
+          await CallKeep.setup();
+          if (data?.name === 'RNCallKeepPerformAnswerCallAction') {
+            CallKeep.toForeground();
+          }
+        } catch (e) {
+          console.warn('[Flyer/bg] callkeep headless task failed', e);
         }
-      } catch (e) {
-        console.warn('[Flyer/bg] callkeep headless task failed', e);
       }
-    }
-  );
+    );
+  } catch (e) {
+    console.warn('[Flyer/bg] could not register the callkeep headless task', e);
+  }
 }
 
 export {};
