@@ -13,6 +13,7 @@ import { useAppStore, appState } from '@/src/services/StateManager';
 import * as Auth from '@/src/services/AuthManager';
 import * as Notifications from '@/src/services/NotificationManager';
 import { startPresence, stopPresence } from '@/src/services/PresenceManager';
+import { requestStartupPermissions } from '@/src/services/PermissionManager';
 import { CallManager } from '@/src/services/CallManager';
 import { listenToChats, listenToBlocks, listenToUser } from '@/src/services/ChatEngine';
 import { listenToContacts, listenToRequests } from '@/src/services/ContactService';
@@ -134,7 +135,31 @@ function RootNavigator() {
       startPresence(user.uid);
       startOutbox();
       CallManager.attach(user.uid);
-      void Notifications.start(user.uid);
+
+      /**
+       * Ask for POST_NOTIFICATIONS *before* registering for push.
+       *
+       * On Android 13+ (targetSdk is 35) the permission is deny-by-default and
+       * has to be requested at runtime. Nothing was requesting it: `start()`
+       * fetches an FCM token and attaches the message listeners, which all
+       * succeed regardless, so the token landed in RTDB, Cloud Functions sent to
+       * it, and Android dropped every notification on the floor. No message
+       * alerts, and no ringing for calls that arrive while Flyer is closed —
+       * with no error anywhere to explain it.
+       *
+       * Sequenced ahead of `start()` rather than in parallel so the token is
+       * only published once the OS will actually surface what we send to it.
+       * Deliberately not blocking: a denial is a valid choice, and the rest of
+       * the session (chats, presence, calls in the foreground) works fine
+       * without it, so the failure is logged and the app carries on.
+       */
+      void requestStartupPermissions()
+        .catch((e) => {
+          console.warn('[Flyer/boot] notification permission request failed', e);
+        })
+        .finally(() => {
+          void Notifications.start(user.uid);
+        });
 
       sessionTeardown = [offMe, offChats, offBlocks, offSelf, offContacts, offRequests];
 
