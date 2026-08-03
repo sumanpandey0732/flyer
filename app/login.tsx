@@ -124,7 +124,7 @@ export default function LoginScreen() {
           </Animated.View>
           <Animated.View style={{ opacity: contentOpacity, transform: [{ translateY: contentSlide }] }}>
             <Text style={[styles.appName, { color: fg }]}>Flyer</Text>
-            <Text style={[styles.tagline, { color: muted }]}>Messages, calls and stories that keep up with you.</Text>
+            <Text style={[styles.tagline, { color: muted }]}>Messages, voice notes and calls that keep up with you.</Text>
           </Animated.View>
         </View>
 
@@ -139,6 +139,8 @@ export default function LoginScreen() {
                 onPress={onGoogle}
                 disabled={busy}
                 haptic
+                accessibilityLabel="Continue with Google"
+                accessibilityState={{ busy, disabled: busy }}
                 style={[styles.button, { backgroundColor: accent, borderRadius: theme.radius.pill, opacity: busy ? 0.7 : 1 }]}
               >
                 {busy ? (
@@ -197,7 +199,12 @@ export default function LoginScreen() {
                   onSubmitEditing={onEmailSubmit}
                   editable={!busy}
                 />
-                <Pressable style={styles.eyeBtn} onPress={() => setShowPassword((v) => !v)}>
+                <Pressable
+                  style={styles.eyeBtn}
+                  onPress={() => setShowPassword((v) => !v)}
+                  accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+                  accessibilityState={{ checked: showPassword }}
+                >
                   <Icon name={showPassword ? 'eye' : 'eyeOff'} size={20} color={faint} />
                 </Pressable>
               </View>
@@ -206,6 +213,10 @@ export default function LoginScreen() {
                 onPress={onEmailSubmit}
                 disabled={busy || !email.trim() || !password}
                 haptic
+                // Explicit label: while busy the child is a spinner, so there is
+                // no text for a screen reader to fall back on.
+                accessibilityLabel={mode === 'signup' ? 'Create account' : 'Sign in'}
+                accessibilityState={{ busy, disabled: busy || !email.trim() || !password }}
                 style={[styles.button, { backgroundColor: accent, borderRadius: theme.radius.pill, opacity: (busy || !email.trim() || !password) ? 0.6 : 1 }]}
               >
                 {busy ? (
@@ -258,6 +269,8 @@ export default function LoginScreen() {
                     onPress={onEmailSubmit}
                     disabled={busy || !email.trim()}
                     haptic
+                    accessibilityLabel="Send reset link"
+                    accessibilityState={{ busy, disabled: busy || !email.trim() }}
                     style={[styles.button, { backgroundColor: accent, borderRadius: theme.radius.pill, opacity: (busy || !email.trim()) ? 0.6 : 1 }]}
                   >
                     {busy ? (

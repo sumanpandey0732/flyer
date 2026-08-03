@@ -23,6 +23,12 @@ export function RecordingWaveform({ level, color }: Props) {
     Array.from({ length: BARS }, () => new Animated.Value(0.08))
   ).current;
   const history = useRef<number[]>(Array(BARS).fill(0.08)).current;
+  // The value we last animated each bar *towards*. Animated.Value exposes no
+  // public getter, and reading its private `_value` would break on an RN bump —
+  // so we mirror the commanded target here instead. Comparing targets is also
+  // the more correct test: a 110ms animation is still in flight when the next
+  // 100ms sample lands, so the live value always lags and would never match.
+  const commanded = useRef<number[]>(Array(BARS).fill(0.08)).current;
 
   useEffect(() => {
     history.shift();
@@ -32,16 +38,25 @@ export function RecordingWaveform({ level, color }: Props) {
     // the older bars are already at their target.
     for (let i = 0; i < BARS; i += 1) {
       const target = history[i];
-      const current = (values[i] as unknown as { _value: number })._value;
-      if (Math.abs(current - target) < 0.01) continue;
+      if (Math.abs(commanded[i] - target) < 0.01) continue;
 
+      commanded[i] = target;
       Animated.timing(values[i], {
         toValue: target,
         duration: 110,
         useNativeDriver: false,
       }).start();
     }
-  }, [level, history, values]);
+  }, [level, history, values, commanded]);
+
+  useEffect(() => {
+    // The composer unmounts this the instant recording ends, which can be
+    // mid-animation for the tail bars. Stop them so nothing keeps ticking
+    // against a detached node.
+    return () => {
+      values.forEach((value) => value.stopAnimation());
+    };
+  }, [values]);
 
   return (
     <View style={styles.container}>

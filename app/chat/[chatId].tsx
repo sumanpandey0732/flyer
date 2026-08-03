@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  BackHandler,
   FlatList,
   KeyboardAvoidingView,
   Modal,
@@ -162,6 +163,15 @@ export default function ChatScreen() {
     [isGroup, chat?.participants]
   );
 
+  /**
+   * Who must have read a group message before its ticks tint, which is everyone
+   * but the sender. Null in a 1:1 chat, where `peerUid` already expresses it.
+   */
+  const tickRecipients = useMemo(
+    () => (isGroup && myUid ? groupMemberUids.filter((uid) => uid !== myUid) : null),
+    [isGroup, groupMemberUids, myUid]
+  );
+
   const peer = useAppStore((s) => (peerUid ? s.users[peerUid] : undefined)) ?? null;
   const peerTyping = useAppStore(selectPeerTyping(chatId ?? '', myUid ?? ''));
 
@@ -223,6 +233,14 @@ export default function ChatScreen() {
   const peerName = peer?.name ?? 'Flyer user';
   /** Header title: the group's name, or the peer's. */
   const title = isGroup ? (chat?.name ?? 'Group') : peerName;
+  /**
+   * What to call the other side in prose — mute copy, the empty state, a11y
+   * labels. In a group there is no peer at all (`peerUid` is null), so
+   * `peerName` falls back to "Flyer user" and the UI ends up saying things like
+   * "Say hello to Flyer user" inside a five-person group. The group's name is
+   * the honest subject there.
+   */
+  const conversationName = isGroup ? (chat?.name ?? 'this group') : peerName;
 
   const users = useAppStore((s) => s.users);
   const nameOf = useCallback(
@@ -651,6 +669,21 @@ export default function ChatScreen() {
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
   /**
+   * Android hardware back cancels the selection instead of leaving the chat.
+   * Without this the back button skips straight out of a screen that is visibly
+   * in a modal state, which reads as the app losing the user's work.
+   * Returning true consumes the event; false lets navigation handle it.
+   */
+  useEffect(() => {
+    if (!selectionMode) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      clearSelection();
+      return true;
+    });
+    return () => sub.remove();
+  }, [selectionMode, clearSelection]);
+
+  /**
    * Long press opens the action sheet normally, and extends the selection once
    * selection mode is already active — the same split WhatsApp uses, where the
    * first long press is a shortcut to one message's actions and the checkbox in
@@ -900,23 +933,30 @@ export default function ChatScreen() {
      * the user is allowed to unsend. On a mixed selection the safe subset is
      * ambiguous, and a confirm that silently does two different things to two
      * halves of a selection is how people delete the wrong thing.
+     *
+     * The mode and the answer are deliberately separate values. Folding them
+     * into one — reading the confirm's boolean as "delete for everyone" — meant
+     * that on a mixed selection, where the prompt is "Delete for me", a *No*
+     * answer was indistinguishable from "not for everyone", and the messages
+     * were deleted anyway. Cancel has to mean cancel in both modes.
      */
-    const forEveryone =
-      mine.length === count
-        ? await confirm({
-            title: `Delete ${count} message${count > 1 ? 's' : ''} for everyone?`,
-            message: 'They will be replaced with "This message was deleted" for both of you.',
-            confirmLabel: 'Delete for everyone',
-            destructive: true,
-          })
-        : await confirm({
-            title: `Delete ${count} message${count > 1 ? 's' : ''}?`,
-            message: 'This removes them from your device only.',
-            confirmLabel: 'Delete for me',
-            destructive: true,
-          });
+    const canUnsendAll = mine.length === count;
 
-    if (!forEveryone && mine.length === count) {
+    const confirmed = canUnsendAll
+      ? await confirm({
+          title: `Delete ${count} message${count > 1 ? 's' : ''} for everyone?`,
+          message: 'They will be replaced with "This message was deleted" for both of you.',
+          confirmLabel: 'Delete for everyone',
+          destructive: true,
+        })
+      : await confirm({
+          title: `Delete ${count} message${count > 1 ? 's' : ''}?`,
+          message: 'This removes them from your device only.',
+          confirmLabel: 'Delete for me',
+          destructive: true,
+        });
+
+    if (!confirmed) {
       // Declining "for everyone" cancels rather than falling back to a local
       // delete: the user asked for one specific thing and said no to it.
       clearSelection();
@@ -929,7 +969,7 @@ export default function ChatScreen() {
     // Sequential: two writes to the same message path would race, and a bulk
     // delete of 30 messages fanned out at once is a burst the rules throttle.
     try {
-      if (mine.length === count) {
+      if (canUnsendAll) {
         for (const m of batch) await deleteMessage(chatId, m.id);
       } else {
         for (const m of batch) await deleteMessageForMe(chatId, m.id, myUid);
@@ -1181,7 +1221,11 @@ export default function ChatScreen() {
               round={26}
               accessibilityRole="checkbox"
               accessibilityState={{ checked }}
-              accessibilityLabel={`Select message from ${item.message.senderId === myUid ? 'you' : peerName}`}
+              accessibilityLabel={`Select message from ${
+                item.message.senderId === myUid
+                  ? 'you'
+                  : (users[item.message.senderId]?.name ?? peerName)
+              }`}
               style={[
                 styles.checkbox,
                 {
@@ -1198,10 +1242,19 @@ export default function ChatScreen() {
               message={item.message}
               mine={item.message.senderId === myUid}
               peerUid={peerUid}
+              myUid={myUid}
+              recipients={tickRecipients}
               // In a group the sender differs per row, so the profile is looked
               // up per message rather than being the one fixed peer.
               sender={
                 isGroup ? (users[item.message.senderId] ?? null) : peer
+              }
+              // The quoted message's author is a third party in a group, so it
+              // resolves separately from `sender` (who wrote the reply itself).
+              replyToSender={
+                item.message.replyTo
+                  ? (users[item.message.replyTo.senderId] ?? null)
+                  : null
               }
               showSenderName={isGroup}
               showTail={item.showTail}
@@ -1221,6 +1274,7 @@ export default function ChatScreen() {
       theme,
       myUid,
       peerUid,
+      tickRecipients,
       peer,
       peerName,
       isGroup,
@@ -1278,88 +1332,154 @@ export default function ChatScreen() {
     <View style={[styles.root, { backgroundColor: theme.colors.chatWallpaper }]}>
       <Stack.Screen options={{ headerShown: false }} />
 
-      {/* --- header --- */}
-      <View
-        style={[
-          styles.header,
-          { backgroundColor: theme.colors.header, paddingTop: insets.top + 6 },
-        ]}
-      >
-        <Pressable
-          round={38}
-          onPress={goBack}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
+      {/* --- header ---
+          Selection mode replaces the whole bar rather than overlaying it, the
+          way WhatsApp does: X to cancel, the count, then the bulk actions. */}
+      {selectionMode ? (
+        <View
+          style={[
+            styles.header,
+            { backgroundColor: theme.colors.header, paddingTop: insets.top + 6 },
+          ]}
         >
-          <Icon name="back" size={30} color="#FFFFFF" />
-        </Pressable>
+          <Pressable
+            round={38}
+            onPress={clearSelection}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel selection"
+          >
+            <Icon name="close" size={26} color="#FFFFFF" />
+          </Pressable>
 
-        <Pressable
-          style={styles.identity}
-          onPress={openProfile}
-          accessibilityRole="button"
-          accessibilityLabel={`Open ${peerName}'s contact info`}
+          <Text style={[styles.headerName, styles.selectionCount]} numberOfLines={1}>
+            {selectedIds.size}
+          </Text>
+
+          {/* Star, copy and forward only make sense for some selections, so they
+              hide rather than sit there disabled. Delete always applies. */}
+          <Pressable
+            round={40}
+            onPress={() => void handleBulkStar()}
+            accessibilityRole="button"
+            accessibilityLabel={`Star ${selectedIds.size} messages`}
+          >
+            <Icon name="star" size={20} color="#FFFFFF" />
+          </Pressable>
+
+          {selectedMessages.some((m) => Boolean(m.text) && !m.deleted) ? (
+            <Pressable
+              round={40}
+              onPress={handleBulkCopy}
+              accessibilityRole="button"
+              accessibilityLabel="Copy selected messages"
+            >
+              <Icon name="copy" size={19} color="#FFFFFF" />
+            </Pressable>
+          ) : null}
+
+          {selectedMessages.some((m) => !m.deleted) ? (
+            <Pressable
+              round={40}
+              onPress={handleBulkForward}
+              accessibilityRole="button"
+              accessibilityLabel={`Forward ${selectedIds.size} messages`}
+            >
+              <Icon name="forward" size={20} color="#FFFFFF" />
+            </Pressable>
+          ) : null}
+
+          <Pressable
+            round={40}
+            onPress={() => void handleBulkDelete()}
+            accessibilityRole="button"
+            accessibilityLabel={`Delete ${selectedIds.size} messages`}
+          >
+            <Icon name="trash" size={20} color="#FFFFFF" />
+          </Pressable>
+        </View>
+      ) : (
+        <View
+          style={[
+            styles.header,
+            { backgroundColor: theme.colors.header, paddingTop: insets.top + 6 },
+          ]}
         >
-          <Avatar
-            uri={isGroup ? (chat?.photoURL ?? null) : (peer?.photoURL ?? null)}
-            name={title}
-            uid={isGroup ? chatId : (peerUid ?? '')}
-            size={38}
-            showPhoto={isGroup || privacy.showPhoto !== false}
-            group={isGroup}
-          />
+          <Pressable
+            round={38}
+            onPress={goBack}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <Icon name="back" size={30} color="#FFFFFF" />
+          </Pressable>
 
-          <View style={styles.identityText}>
-            <Text style={styles.headerName} numberOfLines={1}>
-              {title}
-            </Text>
-            {presenceLine ? (
-              <Text
-                style={[
-                  styles.headerPresence,
-                  peerTyping ? styles.headerPresenceTyping : null,
-                ]}
-                numberOfLines={1}
-              >
-                {presenceLine}
+          <Pressable
+            style={styles.identity}
+            onPress={openProfile}
+            accessibilityRole="button"
+            accessibilityLabel={isGroup ? `Open ${title} group info` : `Open ${peerName}'s contact info`}
+          >
+            <Avatar
+              uri={isGroup ? (chat?.photoURL ?? null) : (peer?.photoURL ?? null)}
+              name={title}
+              uid={isGroup ? chatId : (peerUid ?? '')}
+              size={38}
+              showPhoto={isGroup || privacy.showPhoto !== false}
+              group={isGroup}
+            />
+
+            <View style={styles.identityText}>
+              <Text style={styles.headerName} numberOfLines={1}>
+                {title}
               </Text>
-            ) : null}
-          </View>
-        </Pressable>
+              {presenceLine ? (
+                <Text
+                  style={[
+                    styles.headerPresence,
+                    peerTyping ? styles.headerPresenceTyping : null,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {presenceLine}
+                </Text>
+              ) : null}
+            </View>
+          </Pressable>
 
-        {/* Calling is 1:1 WebRTC — there is no group call to place, so the
-            buttons are absent rather than present-and-broken. */}
-        {!isGroup ? (
-          <>
-            <Pressable
-              round={40}
-              onPress={() => void placeCall('video')}
-              accessibilityRole="button"
-              accessibilityLabel={`Video call ${peerName}`}
-            >
-              <Icon name="video" size={20} color="#FFFFFF" />
-            </Pressable>
+          {/* Calling is 1:1 WebRTC — there is no group call to place, so the
+              buttons are absent rather than present-and-broken. */}
+          {!isGroup ? (
+            <>
+              <Pressable
+                round={40}
+                onPress={() => void placeCall('video')}
+                accessibilityRole="button"
+                accessibilityLabel={`Video call ${peerName}`}
+              >
+                <Icon name="video" size={20} color="#FFFFFF" />
+              </Pressable>
 
-            <Pressable
-              round={40}
-              onPress={() => void placeCall('voice')}
-              accessibilityRole="button"
-              accessibilityLabel={`Voice call ${peerName}`}
-            >
-              <Icon name="phone" size={19} color="#FFFFFF" />
-            </Pressable>
-          </>
-        ) : null}
+              <Pressable
+                round={40}
+                onPress={() => void placeCall('voice')}
+                accessibilityRole="button"
+                accessibilityLabel={`Voice call ${peerName}`}
+              >
+                <Icon name="phone" size={19} color="#FFFFFF" />
+              </Pressable>
+            </>
+          ) : null}
 
-        <Pressable
-          round={38}
-          onPress={() => setMenuOpen((open) => !open)}
-          accessibilityRole="button"
-          accessibilityLabel="More options"
-        >
-          <Icon name="more" size={22} color="#FFFFFF" />
-        </Pressable>
-      </View>
+          <Pressable
+            round={38}
+            onPress={() => setMenuOpen((open) => !open)}
+            accessibilityRole="button"
+            accessibilityLabel="More options"
+          >
+            <Icon name="more" size={22} color="#FFFFFF" />
+          </Pressable>
+        </View>
+      )}
 
       {/* --- overflow menu --- */}
       {menuOpen ? (
@@ -1457,8 +1577,9 @@ export default function ChatScreen() {
                   No messages yet
                 </Text>
                 <Text style={[styles.emptyBody, { color: theme.colors.textMuted }]}>
-                  Say hello to {peerName}. Messages are delivered as soon as they are
-                  online.
+                  {isGroup
+                    ? `Say hello to ${conversationName}. Everyone in the group will see your message.`
+                    : `Say hello to ${peerName}. Messages are delivered as soon as they are online.`}
                 </Text>
               </View>
             }
@@ -1524,7 +1645,7 @@ export default function ChatScreen() {
       <OptionSheet
         visible={muteOpen}
         title="Mute notifications"
-        subtitle={`You will not be notified about new messages from ${peerName}.`}
+        subtitle={`You will not be notified about new messages from ${conversationName}.`}
         options={MUTE_OPTIONS.map((option) => ({ key: option.key, label: option.label }))}
         onPick={(key) => {
           const option = MUTE_OPTIONS.find((o) => o.key === key);
@@ -1651,6 +1772,8 @@ const styles = StyleSheet.create({
   identity: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 9, paddingLeft: 2 },
   identityText: { flex: 1 },
   headerName: { color: '#FFFFFF', fontSize: 17, fontWeight: '600' },
+  /** Takes the space the identity block occupies in the normal header. */
+  selectionCount: { flex: 1, marginLeft: 8, fontSize: 19 },
   headerPresence: { color: 'rgba(255,255,255,0.78)', fontSize: 12, marginTop: 1 },
   headerPresenceTyping: { fontStyle: 'italic' },
 

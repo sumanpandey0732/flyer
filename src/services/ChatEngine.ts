@@ -214,7 +214,7 @@ export function listenToMessages(chatId: string, uid: string): Unsubscribe {
 
     // Queued-but-unsent messages are appended so they appear in the transcript
     // with a clock icon instead of vanishing until connectivity returns.
-    const pending = pendingFor(chatId).map<Message>((q) => ({
+    const queued = pendingFor(chatId).map<Message>((q) => ({
       ...(q.draft as unknown as Message),
       id: q.id,
       chatId,
@@ -223,11 +223,43 @@ export function listenToMessages(chatId: string, uid: string): Unsubscribe {
       pending: true,
     }));
 
-    appState.get().setMessages(chatId, [...list, ...pending]);
+    // Messages that are mid-flight but in neither place yet.
+    //
+    // `sendMedia` inserts an optimistic bubble via `upsertMessage` and only
+    // writes to RTDB once Cloudinary returns, so for the whole upload it exists
+    // in the store alone — not in this snapshot, and not in the outbox either
+    // (that is the offline path). A blind `setMessages` therefore deletes the
+    // bubble, and its progress spinner with it, the instant any other write
+    // touches `messages/{chatId}` — the peer replying mid-upload is enough.
+    // Carrying them forward keeps the bubble until the real row supersedes it.
+    const serverIds = new Set(list.map((m) => m.id));
+    const queuedIds = new Set(queued.map((m) => m.id));
+    const inFlight = (appState.get().messages[chatId] ?? []).filter(
+      (m) => m.pending && !serverIds.has(m.id) && !queuedIds.has(m.id)
+    );
+
+    appState
+      .get()
+      .setMessages(
+        chatId,
+        [...list, ...inFlight, ...queued].sort((a, b) => a.timestamp - b.timestamp)
+      );
   });
 }
 
-/** Older pages, for infinite scroll upward. */
+/**
+ * Older pages, for infinite scroll upward.
+ *
+ * The boundary is inclusive (`endAt(before)`, not `endAt(before - 1)`) because
+ * timestamps are milliseconds and ties are common: a fan-out stamps several rows
+ * from one server clock read, and two quick taps land in the same millisecond.
+ * An exclusive boundary drops the *entire* tie group at `before`, so a sibling
+ * of the oldest loaded message is skipped permanently — the transcript silently
+ * loses a message, and no amount of further scrolling brings it back.
+ *
+ * Inclusive means the caller gets back rows it already has, so one extra row is
+ * requested to keep a full page of new ones, and the caller de-duplicates by id.
+ */
 export async function loadOlderMessages(
   chatId: string,
   before: number,
@@ -235,8 +267,8 @@ export async function loadOlderMessages(
 ): Promise<Message[]> {
   const snap = await ref(Paths.messages(chatId))
     .orderByChild('timestamp')
-    .endAt(before - 1)
-    .limitToLast(Limits.messagePageSize)
+    .endAt(before)
+    .limitToLast(Limits.messagePageSize + 1)
     .once('value');
 
   const raw = (snap.val() as Record<string, Record<string, unknown>> | null) ?? {};

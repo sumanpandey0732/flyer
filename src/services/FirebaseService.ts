@@ -34,7 +34,7 @@ import { Env } from '@/src/config/env';
  */
 let dbInstance: FirebaseDatabaseTypes.Module | null = null;
 
-function database(): FirebaseDatabaseTypes.Module {
+function getDb(): FirebaseDatabaseTypes.Module {
   if (dbInstance) return dbInstance;
 
   // An empty rtdbUrl means the env var is missing; the default app's configured
@@ -61,12 +61,12 @@ function database(): FirebaseDatabaseTypes.Module {
 
 /**
  * Proxy kept so the ~40 `db.ref(...)` call sites below need no edit. Every
- * property access routes through `database()`, so the handle is still created
+ * property access routes through `getDb()`, so the handle is still created
  * lazily on the first real use.
  */
 const db = new Proxy({} as FirebaseDatabaseTypes.Module, {
   get(_target, prop, receiver) {
-    const real = database() as unknown as Record<string | symbol, unknown>;
+    const real = getDb() as unknown as Record<string | symbol, unknown>;
     const value = Reflect.get(real, prop, receiver);
     return typeof value === 'function' ? value.bind(real) : value;
   },
@@ -157,31 +157,103 @@ export function serverTimestamp(): object {
   return ServerValue.TIMESTAMP;
 }
 
-/** Subscribe to a path; returns an unsubscribe you can call unconditionally. */
+/** What a listener was doing when the database cancelled it. */
+export interface ListenerError {
+  /** Full path, not the leaf key — a bare `chatId` is unattributable in logs. */
+  path: string;
+  event: 'value' | 'child_added';
+  error: Error;
+}
+
+type ListenerErrorObserver = (info: ListenerError) => void;
+
+const listenerErrorObservers = new Set<ListenerErrorObserver>();
+
+/**
+ * Subscribe to *every* listener cancellation in the app.
+ *
+ * RTDB does not retry a cancelled listener: when the server rejects a read
+ * (permission denied on a stale rule, a path the signed-out user no longer
+ * owns) the callback fires once and the subscription is dead. Logging that and
+ * moving on is why this app could show a permanently empty chat list with no
+ * indication anything was wrong. Anything that renders connection state — a
+ * banner, a retry affordance, crash reporting — subscribes here.
+ */
+export function onListenerError(observer: ListenerErrorObserver): Unsubscribe {
+  listenerErrorObservers.add(observer);
+  return () => {
+    listenerErrorObservers.delete(observer);
+  };
+}
+
+/**
+ * The absolute path of a Ref or Query. `.key` is only the leaf, so a listener on
+ * `messages/{chatId}` logged as `{chatId}` cannot be told apart from a listener
+ * on `chats/{chatId}`. `toString()` is a full URL; the origin is noise.
+ */
+function describePath(path: string | Ref | Query, r: Ref | Query): string {
+  if (typeof path === 'string') return path;
+  try {
+    return r.ref.toString().replace(/^https?:\/\/[^/]+\//, '');
+  } catch {
+    return r.ref.key ?? '(unknown)';
+  }
+}
+
+function reportListenerError(
+  path: string,
+  event: ListenerError['event'],
+  error: Error,
+  onError?: (e: Error) => void
+): void {
+  console.warn(`[Flyer/rtdb] ${event} listener cancelled at ${path}`, error);
+  onError?.(error);
+
+  for (const observer of listenerErrorObservers) {
+    // An observer that throws must not take down the other observers, and it
+    // certainly must not surface as an unhandled error inside a DB callback.
+    try {
+      observer({ path, event, error });
+    } catch (e) {
+      console.warn('[Flyer/rtdb] listener-error observer threw', e);
+    }
+  }
+}
+
+/**
+ * Subscribe to a path; returns an unsubscribe you can call unconditionally.
+ *
+ * Pass a Query only if you keep *this* unsubscribe alongside it: `off` detaches
+ * by (query object, handler) pair, so calling an old unsubscribe after rebuilding
+ * an equivalent query leaves the original listener attached and leaking.
+ */
 export function onValue(
   path: string | Ref | Query,
   cb: (snap: Snapshot) => void,
   onError?: (e: Error) => void
 ): Unsubscribe {
   const r = typeof path === 'string' ? ref(path) : path;
+  const label = describePath(path, r);
   const handler = r.on(
     'value',
     (snap) => cb(snap),
-    (err) => {
-      // A Query has no `.key` of its own — go through `.ref` for the label.
-      console.warn('[Flyer/rtdb] listener error', typeof path === 'string' ? path : r.ref.key, err);
-      onError?.(err as Error);
-    }
+    (err) => reportListenerError(label, 'value', err as Error, onError)
   );
   return () => r.off('value', handler);
 }
 
 export function onChildAdded(
   path: string | Ref | Query,
-  cb: (snap: Snapshot) => void
+  cb: (snap: Snapshot) => void,
+  onError?: (e: Error) => void
 ): Unsubscribe {
   const r = typeof path === 'string' ? ref(path) : path;
-  const handler = r.on('child_added', (snap) => cb(snap));
+  const label = describePath(path, r);
+  const handler = r.on(
+    'child_added',
+    (snap) => cb(snap),
+    (err) => reportListenerError(label, 'child_added', err as Error, onError)
+  );
   return () => r.off('child_added', handler);
 }
 

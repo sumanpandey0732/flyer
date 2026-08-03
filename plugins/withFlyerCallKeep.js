@@ -1,4 +1,8 @@
-const { withAndroidManifest, AndroidConfig } = require('@expo/config-plugins');
+// `expo/config-plugins` rather than `@expo/config-plugins`: the sub-export is
+// guaranteed to be the same copy the installed expo CLI uses to run this plugin.
+// Depending on the standalone package directly risks resolving a second, version-
+// skewed copy, which is why expo-doctor flags it.
+const { withAndroidManifest, AndroidConfig } = require('expo/config-plugins');
 
 /**
  * withFlyerCallKeep
@@ -35,6 +39,13 @@ const PERMISSIONS = [
   'android.permission.VIBRATE',
   'android.permission.DISABLE_KEYGUARD',
   'android.permission.RECEIVE_BOOT_COMPLETED',
+  // Android 12 split the legacy BLUETOOTH permission. app.config.ts declares
+  // MODIFY_AUDIO_SETTINGS, but routing call audio to a headset also needs this
+  // one on API 31+: react-native-incall-manager enumerates BT devices to offer
+  // the headset as an audio route, and without it that enumeration returns
+  // nothing, so the route silently never appears. Lives here rather than in
+  // app.config.ts because it is only needed for calls.
+  'android.permission.BLUETOOTH_CONNECT',
 ];
 
 const CONNECTION_SERVICE = 'io.wazo.callkeep.VoiceConnectionService';
@@ -109,7 +120,7 @@ function configureMainActivity(activity) {
   activity.$['android:configChanges'] = [...current].join('|');
 }
 
-/** @type {import('@expo/config-plugins').ConfigPlugin} */
+/** @type {import('expo/config-plugins').ConfigPlugin} */
 const withFlyerCallKeep = (config) =>
   withAndroidManifest(config, (cfg) => {
     const manifest = cfg.modResults.manifest;

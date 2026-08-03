@@ -50,15 +50,36 @@ export function AudioPlayer({ uri, durationMs, messageId, tint, trackColor, seed
 
   const bars = useRef(barsFor(seed)).current;
 
+  // False from the moment cleanup runs. expo-av keeps calling the status callback
+  // from native until `unloadAsync` actually completes, and `createAsync` can
+  // resolve long after the row has scrolled away, so every async continuation
+  // below has to re-check this before touching state or storing a handle.
+  const mountedRef = useRef(true);
+  // Latched synchronously, before the first await in the load path. Two fast taps
+  // otherwise both see `soundRef.current === null`, both call `createAsync`, and
+  // the second overwrites the first — leaving an unreachable Sound playing
+  // forever alongside the new one.
+  const loadingRef = useRef(false);
+
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       soundRef.current?.unloadAsync().catch(() => {});
+      soundRef.current = null;
+      // Clear the global whenever it points at this note, even if the handle was
+      // never stored (unmounted mid-load): leaving a stop() closure that targets
+      // a dead component behind would make the next player await a no-op.
       if (activeSound?.id === messageId) activeSound = null;
     };
-  }, [messageId]);
+    // `uri` belongs here: a re-signed media URL under a stable messageId would
+    // otherwise leave the previous Sound loaded and playing the old bytes.
+  }, [messageId, uri]);
 
   const onStatus = (status: AVPlaybackStatus) => {
-    if (!status.isLoaded) return;
+    // Ticks queued before unload completes would otherwise set state on a dead
+    // component.
+    if (!mountedRef.current || !status.isLoaded) return;
     setPositionMs(status.positionMillis ?? 0);
     if (status.durationMillis) setTotalMs(status.durationMillis);
 
@@ -70,10 +91,14 @@ export function AudioPlayer({ uri, durationMs, messageId, tint, trackColor, seed
   };
 
   const toggle = async () => {
+    // A tap that lands while a load is in flight is a no-op rather than a second
+    // load. Pausing is handled below once there is a Sound to pause.
+    if (loadingRef.current) return;
+
     try {
       if (playing) {
         await soundRef.current?.pauseAsync();
-        setPlaying(false);
+        if (mountedRef.current) setPlaying(false);
         return;
       }
 
@@ -83,6 +108,7 @@ export function AudioPlayer({ uri, durationMs, messageId, tint, trackColor, seed
       }
 
       if (!soundRef.current) {
+        loadingRef.current = true;
         setLoading(true);
         await Audio.setAudioModeAsync({
           allowsRecordingIOS: false,
@@ -95,24 +121,42 @@ export function AudioPlayer({ uri, durationMs, messageId, tint, trackColor, seed
           { shouldPlay: true, progressUpdateIntervalMillis: 100 },
           onStatus
         );
+
+        // The row is gone — tapping play then navigating straight back is the
+        // common path here. Nothing will ever unload this handle if we store it,
+        // so drop it now; that is the voice note that plays until app restart.
+        if (!mountedRef.current) {
+          loadingRef.current = false;
+          await sound.unloadAsync().catch(() => {});
+          return;
+        }
+
         soundRef.current = sound;
+        loadingRef.current = false;
         setLoading(false);
       } else {
         await soundRef.current.playAsync();
       }
 
+      if (!mountedRef.current) return;
+
       setPlaying(true);
       activeSound = {
         id: messageId,
+        // Guarded because another player can call this after *this* row has
+        // unmounted — the owner is only cleared on its own cleanup.
         stop: async () => {
           await soundRef.current?.pauseAsync().catch(() => {});
-          setPlaying(false);
+          if (mountedRef.current) setPlaying(false);
         },
       };
     } catch (e) {
       console.warn('[Flyer/audio] playback failed', e);
-      setLoading(false);
-      setPlaying(false);
+      loadingRef.current = false;
+      if (mountedRef.current) {
+        setLoading(false);
+        setPlaying(false);
+      }
     }
   };
 
@@ -122,7 +166,13 @@ export function AudioPlayer({ uri, durationMs, messageId, tint, trackColor, seed
 
   return (
     <View style={styles.row}>
-      <Pressable onPress={toggle} round={38} style={{ backgroundColor: 'transparent' }}>
+      <Pressable
+        onPress={toggle}
+        round={38}
+        style={styles.playButton}
+        accessibilityLabel={playing ? 'Pause voice note' : 'Play voice note'}
+        accessibilityState={{ busy: loading, disabled: loading }}
+      >
         <Icon
           name={loading ? 'clock' : playing ? 'pause' : 'play'}
           size={loading ? 16 : 18}
@@ -154,6 +204,7 @@ export function AudioPlayer({ uri, durationMs, messageId, tint, trackColor, seed
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', minWidth: 210, gap: 4 },
+  playButton: { backgroundColor: 'transparent' },
   waveform: {
     flex: 1,
     flexDirection: 'row',

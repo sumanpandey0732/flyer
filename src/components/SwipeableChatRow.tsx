@@ -1,4 +1,4 @@
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
@@ -16,6 +16,13 @@ import { Icon, type IconName } from './Icon';
  * Distinct from `SwipeableRow`, which is swipe-to-reply on a message bubble:
  * that one snaps back always and never commits on release.
  */
+
+/**
+ * Panel icon and label colour. The panel background is `action.color` — a
+ * saturated accent or slate supplied by the caller — so white is the correct
+ * pairing in both themes and is not a theme token by omission.
+ */
+const ON_PANEL = '#FFFFFF';
 
 /** Drag distance at which the action commits on release. */
 const TRIGGER = 76;
@@ -42,7 +49,10 @@ interface Props {
 export function SwipeableChatRow({ children, right, left, enabled = true }: Props) {
   const theme = useTheme();
   const translateX = useRef(new Animated.Value(0)).current;
-  const armed = useRef(false);
+  // Which side crossed the trigger, not merely *that* one did. Recomputing the
+  // side from the release position lets a drag that arms right, then swings back
+  // across zero, commit the left action — the opposite of what the user last saw.
+  const armedSide = useRef<'left' | 'right' | null>(null);
   // Which panel is currently showing. Kept in a ref (not state) so the gesture
   // does not re-render the row on every frame of the drag.
   const activeSide = useRef<'left' | 'right' | null>(null);
@@ -62,6 +72,34 @@ export function SwipeableChatRow({ children, right, left, enabled = true }: Prop
       commit?.onTrigger();
     },
     [translateX]
+  );
+
+  useEffect(() => {
+    // Committing pins or archives, which reorders or removes this row from the
+    // list — so the row is very often unmounted while the settle spring is still
+    // running. Stop it, or the spring keeps driving a detached node and its
+    // completion callback fires afterwards.
+    return () => translateX.stopAnimation();
+  }, [translateX]);
+
+  // Pin and archive live behind a pan gesture, which does not exist for anyone
+  // driving the app with VoiceOver, TalkBack, or a switch device. Exposing them
+  // as accessibility actions is the only way those users can reach them at all:
+  // AT surfaces them in the actions rotor / local context menu on the row.
+  const a11yActions = useMemo(() => {
+    const actions: { name: string; label: string }[] = [];
+    if (right) actions.push({ name: 'swipeRight', label: right.label });
+    if (left) actions.push({ name: 'swipeLeft', label: left.label });
+    return actions;
+  }, [right, left]);
+
+  const onA11yAction = useCallback(
+    (event: { nativeEvent: { actionName: string } }) => {
+      const action = event.nativeEvent.actionName === 'swipeRight' ? right : left;
+      // No spring to settle — the row never moved — so trigger directly.
+      action?.onTrigger();
+    },
+    [right, left]
   );
 
   const pan = Gesture.Pan()
@@ -90,20 +128,24 @@ export function SwipeableChatRow({ children, right, left, enabled = true }: Prop
       translateX.setValue(side === 'right' ? clamped : -clamped);
 
       // One tick when crossing the threshold, so the commit point is felt
-      // rather than guessed.
-      if (magnitude >= TRIGGER && !armed.current) {
-        armed.current = true;
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-      } else if (magnitude < TRIGGER) {
-        armed.current = false;
+      // rather than guessed. Re-arming on a *different* side re-ticks, because
+      // that is a new commit the user needs to feel.
+      if (magnitude >= TRIGGER) {
+        if (armedSide.current !== side) {
+          armedSide.current = side;
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+        }
+      } else {
+        armedSide.current = null;
       }
     })
-    .onEnd((event) => {
-      const side = event.translationX > 0 ? 'right' : 'left';
-      const action = side === 'right' ? right : left;
-      const commit = armed.current && action ? action : null;
-      armed.current = false;
-      settle(commit);
+    .onEnd(() => {
+      // Commit the side that armed, so the action that fires is the panel that
+      // was open when the finger let go.
+      const side = armedSide.current;
+      const action = side === 'right' ? right : side === 'left' ? left : undefined;
+      armedSide.current = null;
+      settle(action ?? null);
     })
     .runOnJS(true);
 
@@ -119,9 +161,14 @@ export function SwipeableChatRow({ children, right, left, enabled = true }: Prop
           { backgroundColor: action.color },
         ]}
         pointerEvents="none"
+        // The panel only ever restates the action already announced via
+        // `accessibilityActions` on the wrapper, so leaving it in the tree would
+        // just read the same label twice.
+        importantForAccessibility="no-hide-descendants"
+        accessibilityElementsHidden
       >
         <View style={styles.panelInner}>
-          <Icon name={action.icon} size={22} color="#FFFFFF" />
+          <Icon name={action.icon} size={22} color={ON_PANEL} />
           <Text style={styles.panelLabel} numberOfLines={1}>
             {action.label}
           </Text>
@@ -131,7 +178,11 @@ export function SwipeableChatRow({ children, right, left, enabled = true }: Prop
   };
 
   return (
-    <View style={[styles.wrapper, { backgroundColor: theme.colors.bg }]}>
+    <View
+      style={[styles.wrapper, { backgroundColor: theme.colors.bg }]}
+      accessibilityActions={a11yActions}
+      onAccessibilityAction={onA11yAction}
+    >
       {renderPanel(right, 'right')}
       {renderPanel(left, 'left')}
 
@@ -161,5 +212,5 @@ const styles = StyleSheet.create({
   panelRight: { left: 0, alignItems: 'flex-start', paddingLeft: 24 },
   panelLeft: { right: 0, alignItems: 'flex-end', paddingRight: 24 },
   panelInner: { alignItems: 'center', gap: 4 },
-  panelLabel: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
+  panelLabel: { color: ON_PANEL, fontSize: 12, fontWeight: '600' },
 });

@@ -1,6 +1,8 @@
 const fs = require('fs');
 const path = require('path');
-const { withAndroidManifest, withDangerousMod } = require('@expo/config-plugins');
+// Sub-export, not the standalone `@expo/config-plugins` package — see the note
+// in withFlyerCallKeep.js.
+const { withAndroidManifest, withDangerousMod } = require('expo/config-plugins');
 
 /**
  * withFlyerNotificationIcon

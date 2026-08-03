@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import type { ExpoConfig, ConfigContext } from 'expo/config';
 
 /**
@@ -12,10 +14,32 @@ import type { ExpoConfig, ConfigContext } from 'expo/config';
 
 const PACKAGE = 'com.flyer.chat';
 
+/**
+ * Resolve a native Firebase config file, or undefined if it is not on disk.
+ *
+ * Expo validates `googleServicesFile` strictly: naming a path that does not
+ * exist fails the whole config with "Could not parse Expo config", which breaks
+ * `expo config`, `expo export` and every EAS build — including Android builds
+ * that have nothing to do with the missing iOS plist. Returning undefined omits
+ * the key instead, so the platform is simply unconfigured until someone adds
+ * the file, which is the honest state of an Android-first project.
+ */
+function firebaseConfigFile(envVar: string | undefined, fallback: string): string | undefined {
+  const candidate = envVar ?? fallback;
+  return fs.existsSync(path.resolve(__dirname, candidate)) ? candidate : undefined;
+}
+
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: 'Flyer',
-  slug: 'flyer',
+  // Must match the slug of the EAS project in extra.eas.projectId, which is not
+  // "flyer" — that project lives on a different account. The user-visible name
+  // above is what shows on the device; this is only the EAS project handle.
+  slug: 'a007light',
+  // The EAS account that owns the project referenced by extra.eas.projectId.
+  // Required because the signed-in account is a member of several orgs: without
+  // it, EAS cannot tell which one this slug belongs to and refuses to build.
+  owner: 'a007firsts-team',
   scheme: 'flyer',
   version: '1.0.0',
   orientation: 'portrait',
@@ -34,7 +58,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ios: {
     bundleIdentifier: PACKAGE,
     supportsTablet: false,
-    googleServicesFile: process.env.GOOGLE_SERVICES_PLIST ?? './GoogleService-Info.plist',
+    googleServicesFile: firebaseConfigFile(
+      process.env.GOOGLE_SERVICES_PLIST,
+      './GoogleService-Info.plist'
+    ),
     infoPlist: {
       UIBackgroundModes: ['audio', 'voip', 'remote-notification', 'fetch'],
       NSCameraUsageDescription:
@@ -53,7 +80,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
 
   android: {
     package: PACKAGE,
-    googleServicesFile: process.env.GOOGLE_SERVICES_JSON ?? './google-services.json',
+    googleServicesFile: firebaseConfigFile(
+      process.env.GOOGLE_SERVICES_JSON,
+      './google-services.json'
+    ),
     adaptiveIcon: {
       foregroundImage: './assets/adaptive-icon.png',
       backgroundColor: '#0B141A',
@@ -136,7 +166,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // makes it skip linking and then fail looking the fake up.  Left undefined,
     // `eas init` creates the project and prints the real id, which goes in `.env`.
     eas: {
-      projectId: 'bc34843e-825a-4f6d-a88c-0e185184792a',
+      projectId: '5725af5d-1a29-47d3-af21-bde2e6cece80',
     },
   },
 });
