@@ -59,32 +59,51 @@ async function handleCallPush(push: CallPush) {
 /**
  * Fires when the app is in the background or fully terminated.
  * Must return a promise; Android keeps the headless task alive until it settles.
+ *
+ * The registration itself is wrapped, not just the handler body. This module is
+ * imported from index.js on the very first JS tick — before `expo-router/entry`,
+ * before React, before any error boundary exists. `messaging()` throws if the
+ * native Firebase default app has not finished initialising at that instant, and
+ * a throw here escapes index.js and kills the process: splash screen, then
+ * straight back to the launcher, with no red box and nothing in the JS logs.
+ *
+ * Losing background call pushes is bad. Losing the entire app is worse, so a
+ * failure here degrades instead of aborting: the foreground `incoming/{uid}`
+ * listener in CallManager still rings calls once React mounts.
  */
-messaging().setBackgroundMessageHandler(async (message) => {
-  const push = parse(message);
-  if (!push) return;
+function registerBackgroundHandler() {
+  messaging().setBackgroundMessageHandler(async (message) => {
+    const push = parse(message);
+    if (!push) return;
 
-  try {
-    switch (push.kind) {
-      case 'call':
-        await handleCallPush(push);
-        break;
+    try {
+      switch (push.kind) {
+        case 'call':
+          await handleCallPush(push);
+          break;
 
-      case 'call_cancel':
-        // The caller gave up. Report 'missed' so it lands in the OS call log
-        // correctly rather than looking like the user declined.
-        CallKeep.endCall(String(push.callId).toLowerCase(), 'missed');
-        break;
+        case 'call_cancel':
+          // The caller gave up. Report 'missed' so it lands in the OS call log
+          // correctly rather than looking like the user declined.
+          CallKeep.endCall(String(push.callId).toLowerCase(), 'missed');
+          break;
 
-      case 'message':
-        // Message pushes carry a `notification` block, so the system tray draws
-        // them without our involvement. Nothing to do here.
-        break;
+        case 'message':
+          // Message pushes carry a `notification` block, so the system tray draws
+          // them without our involvement. Nothing to do here.
+          break;
+      }
+    } catch (e) {
+      console.warn('[Flyer/bg] background message handler failed', e);
     }
-  } catch (e) {
-    console.warn('[Flyer/bg] background message handler failed', e);
-  }
-});
+  });
+}
+
+try {
+  registerBackgroundHandler();
+} catch (e) {
+  console.warn('[Flyer/bg] could not register the background message handler', e);
+}
 
 /**
  * Android-only headless task. When the user answers from the lock screen on a

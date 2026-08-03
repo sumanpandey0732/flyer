@@ -10,13 +10,67 @@ import { Env } from '@/src/config/env';
  * construction lives in exactly one place and listener teardown is uniform.
  */
 
-const db: FirebaseDatabaseTypes.Module = Env.rtdbUrl
-  ? firebase.app().database(Env.rtdbUrl)
-  : firebase.database();
+/**
+ * The database handle, created on first use rather than at import time.
+ *
+ * This used to run at module scope, and it is the single worst place in the app
+ * to put it. Three separate things here throw, all of them before React mounts,
+ * so there is no error boundary and no red box — the process just dies between
+ * the splash screen and the first frame:
+ *
+ *   - `firebase.app()` throws "No Firebase App '[DEFAULT]' has been created" if
+ *     the native module has not finished initialising.
+ *   - `database(url)` throws on a malformed URL, which includes the empty string
+ *     `env.ts` returns for a missing EXPO_PUBLIC_RTDB_URL.
+ *   - `setPersistenceEnabled` throws "must be made before any other usage of
+ *     FirebaseDatabase instance" if anything touched the database first. On a
+ *     cold start from a push that is exactly what happens: index.js imports
+ *     BackgroundTaskManager (which calls `messaging()`) before the router, and
+ *     the handler can reach the database before this module is even evaluated.
+ *
+ * Deferring to first call fixes all three: by then native init has completed,
+ * and the persistence call is wrapped because failing to enable a disk cache is
+ * not worth losing the app over.
+ */
+let dbInstance: FirebaseDatabaseTypes.Module | null = null;
 
-// Cache reads to disk so a cold start renders the last known chat list before
-// the socket connects.
-db.setPersistenceEnabled(true);
+function database(): FirebaseDatabaseTypes.Module {
+  if (dbInstance) return dbInstance;
+
+  // An empty rtdbUrl means the env var is missing; the default app's configured
+  // URL from google-services.json is a better guess than a certain throw.
+  let instance: FirebaseDatabaseTypes.Module;
+  try {
+    instance = Env.rtdbUrl ? firebase.app().database(Env.rtdbUrl) : firebase.database();
+  } catch (e) {
+    console.warn('[Flyer/db] could not open the configured RTDB URL, falling back', e);
+    instance = firebase.database();
+  }
+
+  // Cache reads to disk so a cold start renders the last known chat list before
+  // the socket connects. Non-fatal: throws if the database was already used.
+  try {
+    instance.setPersistenceEnabled(true);
+  } catch (e) {
+    console.warn('[Flyer/db] disk persistence unavailable', e);
+  }
+
+  dbInstance = instance;
+  return instance;
+}
+
+/**
+ * Proxy kept so the ~40 `db.ref(...)` call sites below need no edit. Every
+ * property access routes through `database()`, so the handle is still created
+ * lazily on the first real use.
+ */
+const db = new Proxy({} as FirebaseDatabaseTypes.Module, {
+  get(_target, prop, receiver) {
+    const real = database() as unknown as Record<string | symbol, unknown>;
+    const value = Reflect.get(real, prop, receiver);
+    return typeof value === 'function' ? value.bind(real) : value;
+  },
+});
 
 export type Ref = FirebaseDatabaseTypes.Reference;
 /**

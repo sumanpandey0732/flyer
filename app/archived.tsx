@@ -32,7 +32,7 @@ export default function ArchivedScreen() {
   const insets = useSafeAreaInsets();
 
   const myUid = useAppStore((s) => s.currentUser?.uid ?? null);
-  const chats = useAppStore(selectArchivedChats);
+  const chats = useArchivedChats();
   const users = useAppStore((s) => s.users);
 
   const [menuFor, setMenuFor] = useState<ChatSummary | null>(null);

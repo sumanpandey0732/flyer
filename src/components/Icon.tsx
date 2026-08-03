@@ -102,6 +102,8 @@ const ICONS = {
   // theme
   moon: ['community', 'weather-night'],
   sun: ['material', 'wb-sunny'],
+  eye: ['material', 'visibility'],
+  eyeOff: ['material', 'visibility-off'],
 } satisfies Record<string, readonly [Family, string]>;
 
 export type IconName = keyof typeof ICONS;

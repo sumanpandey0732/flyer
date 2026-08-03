@@ -14,9 +14,9 @@ import {
   declineRequest,
 } from '@/src/services/ContactService';
 import {
-  selectIncomingRequests,
-  selectOutgoingRequests,
   useAppStore,
+  useIncomingRequests,
+  useOutgoingRequests,
 } from '@/src/services/StateManager';
 
 type Row = ContactRequest | { header: string };
@@ -36,8 +36,8 @@ export default function RequestsScreen() {
 
   const myUid = useAppStore((s) => s.currentUser?.uid) ?? null;
   const users = useAppStore((s) => s.users);
-  const incoming = useAppStore(selectIncomingRequests);
-  const outgoing = useAppStore(selectOutgoingRequests);
+  const incoming = useIncomingRequests();
+  const outgoing = useOutgoingRequests();
 
   const [busy, setBusy] = useState<string | null>(null);
 

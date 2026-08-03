@@ -12,8 +12,22 @@ import { Ice, Limits } from '@/src/config/env';
 import { AudioRouteManager, type AudioRoute } from './AudioRoute';
 
 // Installs RTCPeerConnection & friends onto global, which the adapter-style
-// code paths inside react-native-webrtc expect.
-registerGlobals();
+// code paths inside react-native-webrtc expect. Called lazily on first use
+// rather than at module scope — this module is imported transitively by
+// CallManager, which is imported by _layout.tsx, which runs before React
+// mounts. registerGlobals() throws "WebRTCModule is null" if the native side
+// has not linked, and a throw at module scope before any error boundary exists
+// produces the silent splash-then-launcher crash.
+let globalsRegistered = false;
+export function ensureWebRTCGlobals() {
+  if (globalsRegistered) return;
+  try {
+    registerGlobals();
+    globalsRegistered = true;
+  } catch (e) {
+    console.warn('[Flyer/webrtc] registerGlobals failed — calls will not work', e);
+  }
+}
 
 /**
  * react-native-webrtc's own `RTCSessionDescriptionInit` (sdp is required, type
@@ -93,6 +107,10 @@ export class WebRTCManager {
   private closed = false;
 
   constructor(opts: { video: boolean; polite: boolean; callbacks: WebRTCCallbacks }) {
+    // First point in the app's life where WebRTC is genuinely needed, and by now
+    // React has mounted so a failure surfaces as a call error rather than a
+    // silent process death at boot.
+    ensureWebRTCGlobals();
     this.isVideo = opts.video;
     this.polite = opts.polite;
     this.cb = opts.callbacks;
