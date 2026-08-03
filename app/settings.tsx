@@ -195,7 +195,7 @@ export default function SettingsScreen() {
             />
           }
         />
-        <Caption text="When on, your recent messages in a chat are sent to Mistral AI to generate reply suggestions. Off by default." />
+        <Caption text="When on, your recent messages in a chat are sent to AI to generate reply suggestions. Off by default." />
 
         <SectionHeader label="Notifications" />
         <ListRow
