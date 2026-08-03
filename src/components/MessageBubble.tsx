@@ -37,7 +37,17 @@ interface Props {
   message: Message;
   mine: boolean;
   peerUid: string | null;
+  /**
+   * The signed-in uid. Used to label a reply quote "You" vs the author's name.
+   * Comparing against `peerUid` instead looks right in a 1:1 chat and is wrong in
+   * every group, where `peerUid` is null and so every quote read as "You".
+   */
+  myUid: string | null;
+  /** Every uid that must have read a message before its ticks tint. Groups only. */
+  recipients?: string[] | null;
   sender: UserProfile | null;
+  /** Author of the quoted message, resolved by the parent from the users map. */
+  replyToSender?: UserProfile | null;
   /** True in a group chat: incoming bubbles get the sender's name on top. */
   showSenderName?: boolean;
   showTail: boolean;
@@ -66,7 +76,10 @@ function MessageBubbleImpl({
   message,
   mine,
   peerUid,
+  myUid,
+  recipients,
   sender,
+  replyToSender,
   showSenderName = false,
   showTail,
   starred,
@@ -133,6 +146,7 @@ function MessageBubbleImpl({
         <Ticks
           message={message}
           peerUid={peerUid}
+          recipients={recipients}
           color={theme.colors.tick}
           seenColor={theme.colors.tickSeen}
         />
@@ -192,7 +206,11 @@ function MessageBubbleImpl({
           ]}
         >
           <Text style={[styles.replyName, { color: theme.colors.accent }]} numberOfLines={1}>
-            {message.replyTo.senderId === peerUid ? (sender?.name ?? 'Them') : 'You'}
+            {message.replyTo.senderId === myUid
+              ? 'You'
+              : (replyToSender?.name ??
+                (message.replyTo.senderId === message.senderId ? sender?.name : null) ??
+                'Them')}
           </Text>
           <Text style={[styles.replyPreview, { color: theme.colors.textMuted }]} numberOfLines={2}>
             {message.replyTo.preview}

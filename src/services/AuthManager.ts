@@ -10,7 +10,7 @@ import { Paths, fanOut, readOnce, serverTimestamp, update } from './FirebaseServ
 import { claimInitialUsername, releaseUsername } from './UsernameService';
 
 /**
- * AuthManager — Google Sign-In only.
+ * AuthManager — Google Sign-In + Email/Password.
  *
  * Note on the deviation from "Expo AuthSession": we use the native Google
  * Sign-In module rather than AuthSession because the rest of the app depends on
@@ -42,7 +42,34 @@ export class GoogleSignInCancelled extends Error {
   }
 }
 
-/** Interactive sign-in. Throws GoogleSignInCancelled if the user backs out. */
+/**
+ * Sign up with email and password. Creates a new Firebase Auth account and
+ * upserts the profile. Throws if the email is already in use or the password
+ * is too weak (Firebase enforces >=6 characters).
+ */
+export async function signUpWithEmail(
+  email: string,
+  password: string
+): Promise<FirebaseAuthTypes.User> {
+  const { user } = await auth().createUserWithEmailAndPassword(email, password);
+  await upsertProfile(user);
+  return user;
+}
+
+/**
+ * Sign in with email and password. Throws if the credentials are wrong or the
+ * account does not exist.
+ */
+export async function signInWithEmail(
+  email: string,
+  password: string
+): Promise<FirebaseAuthTypes.User> {
+  const { user } = await auth().signInWithEmailAndPassword(email, password);
+  await upsertProfile(user);
+  return user;
+}
+
+/** Interactive Google sign-in. Throws GoogleSignInCancelled if the user backs out. */
 export async function signInWithGoogle(): Promise<FirebaseAuthTypes.User> {
   configureGoogleSignIn();
 
@@ -129,6 +156,50 @@ export async function upsertProfile(user: FirebaseAuthTypes.User): Promise<void>
     } catch (e) {
       console.warn('[Flyer/auth] could not backfill a username', e);
     }
+  }
+}
+
+/** Sends a reset link. Resolves even when the address has no account, so the
+ * screen cannot be used to enumerate which emails are registered. */
+export async function sendPasswordReset(email: string): Promise<void> {
+  try {
+    await auth().sendPasswordResetEmail(email);
+  } catch (e) {
+    if ((e as { code?: string }).code === 'auth/user-not-found') return;
+    throw e;
+  }
+}
+
+/**
+ * Firebase auth codes are not user-facing strings ("auth/invalid-credential").
+ * Map the ones an email flow can actually produce; anything unmapped falls back
+ * to the raw message rather than a generic lie about what went wrong.
+ */
+export function authErrorMessage(e: unknown): string {
+  const code = (e as { code?: string }).code ?? '';
+  switch (code) {
+    case 'auth/invalid-email':
+      return 'That email address is not valid.';
+    case 'auth/email-already-in-use':
+      return 'An account already exists with that email. Sign in instead.';
+    case 'auth/weak-password':
+      return 'Use at least 6 characters for your password.';
+    case 'auth/user-not-found':
+    case 'auth/wrong-password':
+    case 'auth/invalid-credential':
+      // Deliberately one message for all three: saying "no such user" tells an
+      // attacker which addresses are registered.
+      return 'Wrong email or password.';
+    case 'auth/user-disabled':
+      return 'This account has been disabled.';
+    case 'auth/too-many-requests':
+      return 'Too many attempts. Try again in a few minutes.';
+    case 'auth/network-request-failed':
+      return 'No connection. Check your internet and try again.';
+    case 'auth/operation-not-allowed':
+      return 'Email sign-in is not enabled for this project yet.';
+    default:
+      return (e as Error)?.message ?? 'Something went wrong. Try again.';
   }
 }
 

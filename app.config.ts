@@ -20,7 +20,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   version: '1.0.0',
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
-  newArchEnabled: true,
+  // Off deliberately. react-native-callkeep, react-native-incall-manager and
+  // react-native-webrtc are all old-architecture modules — none has a Fabric or
+  // TurboModule spec. All three register during native init, before JS runs, so
+  // under the New Architecture the process dies at launch with no JS error to
+  // catch: splash, then straight back to the launcher. Calls are core to this
+  // app, so the interop layer is not worth betting startup on.
+  newArchEnabled: false,
   assetBundlePatterns: ['**/*'],
   // Regenerate with `python3 tools/gen-assets.py` if the mark ever changes.
   icon: './assets/icon.png',

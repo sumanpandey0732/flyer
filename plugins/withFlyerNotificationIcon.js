@@ -78,8 +78,14 @@ function withIconAsset(config) {
 /** Point Firebase at the icon and accent colour. */
 function withManifestMetaData(config) {
   return withAndroidManifest(config, (cfg) => {
-    const app = cfg.modResults.manifest.application?.[0];
+    const manifest = cfg.modResults.manifest;
+    const app = manifest.application?.[0];
     if (!app) throw new Error('withFlyerNotificationIcon: no <application> in the manifest.');
+
+    // `tools:replace` below is meaningless without this namespace, and the
+    // merger fails with a bare "unknown prefix" rather than anything helpful.
+    manifest.$ = manifest.$ ?? {};
+    manifest.$['xmlns:tools'] = manifest.$['xmlns:tools'] ?? 'http://schemas.android.com/tools';
 
     app['meta-data'] = app['meta-data'] ?? [];
 
@@ -90,6 +96,11 @@ function withManifestMetaData(config) {
       delete entry.$['android:value'];
       delete entry.$['android:resource'];
       entry.$[attr] = value;
+      // @react-native-firebase/messaging declares both of these itself — the
+      // icon as the app icon, the colour as @color/white. Two libraries setting
+      // the same meta-data is a merge conflict the tool refuses to resolve on
+      // its own, so state outright that ours wins.
+      entry.$['tools:replace'] = attr;
       if (!existing) app['meta-data'].push(entry);
     };
 

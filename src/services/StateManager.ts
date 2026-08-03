@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 import type {
   CallRecord,
   CallState,
@@ -230,6 +231,36 @@ export const selectArchivedChats = (s: AppState): ChatSummary[] =>
     .sort((a, b) => b.lastTimestamp - a.lastTimestamp);
 
 /**
+ * Memoised hooks for the derived-array selectors above.
+ *
+ * These must be used instead of `useAppStore(selectSortedChats)`. zustand 5
+ * dropped the automatic equality check that v4's `useStore(selector, shallow)`
+ * gave you — the default `useStore` compares with `Object.is`, so a selector
+ * building a fresh array (which every one of these does: filter + sort) is a new
+ * reference on every single store write. That re-renders the whole chat list on
+ * each keystroke of a typing indicator, and React 18's `useSyncExternalStore`
+ * can escalate it to a "getSnapshot should be cached" infinite loop.
+ *
+ * `useShallow` keeps the previous array when its elements are pairwise ===,
+ * which holds because the store replaces chat objects only when they change.
+ */
+export const useSortedChats = (): ChatSummary[] =>
+  useAppStore(useShallow(selectSortedChats));
+
+export const useArchivedChats = (): ChatSummary[] =>
+  useAppStore(useShallow(selectArchivedChats));
+
+/**
+ * Count of archived chats. A number, so it needs no shallow wrapper — deriving
+ * it here rather than in the screen keeps the length out of the render path.
+ */
+export const selectArchivedCount = (s: AppState): number => {
+  let n = 0;
+  for (const c of Object.values(s.chats)) if (c.archived) n++;
+  return n;
+};
+
+/**
  * Unread across archived chats too: the count on the Archived row is what tells
  * the user something is waiting in there.
  */
@@ -259,6 +290,12 @@ export const selectIncomingRequests = (s: AppState): ContactRequest[] =>
 
 export const selectOutgoingRequests = (s: AppState): ContactRequest[] =>
   s.requests.filter((r) => r.direction === 'outgoing');
+
+export const useIncomingRequests = (): ContactRequest[] =>
+  useAppStore(useShallow(selectIncomingRequests));
+
+export const useOutgoingRequests = (): ContactRequest[] =>
+  useAppStore(useShallow(selectOutgoingRequests));
 
 /** Drives the badge on the Contacts tab. */
 export const selectIncomingRequestCount = (s: AppState): number =>

@@ -11,9 +11,10 @@ import { EmptyState } from '@/src/components/EmptyState';
 import { alertError, confirm } from '@/src/components/Confirm';
 import { SwipeableChatRow } from '@/src/components/SwipeableChatRow';
 import {
+  selectArchivedCount,
   selectArchivedUnread,
-  selectSortedChats,
   useAppStore,
+  useSortedChats,
 } from '@/src/services/StateManager';
 import {
   clearChat,
@@ -38,11 +39,9 @@ export default function ChatsScreen() {
   const insets = useSafeAreaInsets();
 
   const myUid = useAppStore((s) => s.currentUser?.uid ?? null);
-  const chats = useAppStore(selectSortedChats);
+  const chats = useSortedChats();
   const users = useAppStore((s) => s.users);
-  const archivedCount = useAppStore(
-    (s) => Object.values(s.chats).filter((c) => c.archived).length
-  );
+  const archivedCount = useAppStore(selectArchivedCount);
   const archivedUnread = useAppStore(selectArchivedUnread);
 
   const [searching, setSearching] = useState(false);

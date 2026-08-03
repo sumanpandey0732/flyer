@@ -10,7 +10,7 @@ import { SwipeableChatRow } from '@/src/components/SwipeableChatRow';
 import { EmptyState } from '@/src/components/EmptyState';
 import { ActionSheet, type SheetAction } from '@/src/components/ActionSheet';
 import { alertError, confirm } from '@/src/components/Confirm';
-import { selectArchivedChats, useAppStore } from '@/src/services/StateManager';
+import { useAppStore, useArchivedChats } from '@/src/services/StateManager';
 import {
   deleteChatForMe,
   isChatMuted,
