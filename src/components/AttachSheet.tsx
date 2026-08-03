@@ -36,12 +36,12 @@ export function AttachSheet({ visible, onClose, onPicked }: Props) {
     }
   };
 
-  const options: Array<{
+  const options: {
     icon: IconName;
     label: string;
     color: string;
     action: () => Promise<PickedMedia[]>;
-  }> = [
+  }[] = [
     {
       icon: 'camera',
       label: 'Camera',

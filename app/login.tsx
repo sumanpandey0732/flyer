@@ -165,7 +165,7 @@ export default function LoginScreen() {
 
               <Pressable onPress={() => switchMode('signup')} style={styles.linkRow}>
                 <Text style={[styles.linkText, { color: muted }]}>
-                  Don't have an account?{' '}
+                  Don&apos;t have an account?{' '}
                   <Text style={{ color: accent, fontWeight: '600' }}>Sign up</Text>
                 </Text>
               </Pressable>
@@ -251,7 +251,7 @@ export default function LoginScreen() {
               ) : (
                 <>
                   <Text style={[styles.resetHint, { color: muted }]}>
-                    Enter your email and we'll send a reset link.
+                    Enter your email and we&apos;ll send a reset link.
                   </Text>
                   <TextInput
                     style={inputStyle}

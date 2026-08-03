@@ -1,5 +1,5 @@
 import type { CallHistoryEntry } from '@/src/config/types';
-import { Paths, onValue, remove, readOnce } from './FirebaseService';
+import { Paths, onValue, remove } from './FirebaseService';
 
 /**
  * CallHistoryService — read and manage call history.

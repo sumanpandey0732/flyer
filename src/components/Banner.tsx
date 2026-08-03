@@ -31,6 +31,18 @@ export function Banner({ banner, onPress, onDismiss }: Props) {
   // re-arms the timer instead of inheriting the previous one's remaining time.
   const key = banner ? `${banner.chatId}:${banner.title}:${banner.body}` : null;
 
+  /**
+   * Always call the newest `onDismiss`, without letting its identity re-arm the
+   * timer. The parent re-creates this callback on most renders, so listing it as
+   * a dependency would restart the 4s countdown each time and a chatty app would
+   * keep the banner up indefinitely. Omitting it instead captures the callback
+   * from the render that set the key, which goes stale. A ref sidesteps both:
+   * the effect stays keyed on the message alone, and the timer fires whatever
+   * handler is current when it actually elapses.
+   */
+  const dismissRef = useRef(onDismiss);
+  dismissRef.current = onDismiss;
+
   useEffect(() => {
     if (!key) {
       Animated.timing(translateY, {
@@ -50,9 +62,9 @@ export function Banner({ banner, onPress, onDismiss }: Props) {
       useNativeDriver: true,
     }).start();
 
-    const timer = setTimeout(onDismiss, AUTO_DISMISS_MS);
+    const timer = setTimeout(() => dismissRef.current(), AUTO_DISMISS_MS);
     return () => clearTimeout(timer);
-  }, [key]);
+  }, [key, translateY]);
 
   if (!banner) return null;
 

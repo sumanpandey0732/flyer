@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -75,7 +75,7 @@ function RootNavigator() {
     void hydrateSmartReply();
     void Notifications.ensureChannels();
 
-    let sessionTeardown: Array<() => void> = [];
+    let sessionTeardown: (() => void)[] = [];
     let activeUid: string | null = null;
 
     const teardownSession = () => {

@@ -23,7 +23,7 @@ import { appState } from './StateManager';
  * socket is up" behind a captive portal.
  */
 
-let teardown: Array<() => void> = [];
+let teardown: (() => void)[] = [];
 let activeUid: string | null = null;
 
 export function startPresence(uid: string) {

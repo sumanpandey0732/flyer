@@ -24,7 +24,7 @@ type Navigate = (path: string) => void;
 
 let navigate: Navigate | null = null;
 let bannerHandler: ((b: Banner) => void) | null = null;
-let teardown: Array<() => void> = [];
+let teardown: (() => void)[] = [];
 let currentToken: string | null = null;
 
 export function setNavigator(fn: Navigate) {

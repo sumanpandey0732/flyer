@@ -105,7 +105,7 @@ const REPORT_REASONS = [
   'Other',
 ] as const;
 
-const MUTE_OPTIONS: Array<{ key: string; label: string; ms: number }> = [
+const MUTE_OPTIONS: { key: string; label: string; ms: number }[] = [
   { key: '8h', label: 'For 8 hours', ms: 8 * 60 * 60 * 1000 },
   { key: '1w', label: 'For 1 week', ms: 7 * 24 * 60 * 60 * 1000 },
   { key: 'always', label: 'Always', ms: -1 },
@@ -1713,7 +1713,7 @@ function OptionSheet({
   visible: boolean;
   title: string;
   subtitle?: string;
-  options: Array<{ key: string; label: string }>;
+  options: { key: string; label: string }[];
   onPick: (key: string) => void;
   onClose: () => void;
 }) {

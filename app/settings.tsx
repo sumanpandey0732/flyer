@@ -26,17 +26,17 @@ import {
 
 type ThemeMode = 'system' | 'light' | 'dark';
 
-const THEME_MODES: Array<{ mode: ThemeMode; label: string }> = [
+const THEME_MODES: { mode: ThemeMode; label: string }[] = [
   { mode: 'system', label: 'System default' },
   { mode: 'light', label: 'Light' },
   { mode: 'dark', label: 'Dark' },
 ];
 
-const PRIVACY_ROWS: Array<{
+const PRIVACY_ROWS: {
   key: keyof PrivacySettings;
   title: string;
   subtitle: string;
-}> = [
+}[] = [
   {
     key: 'showLastSeen',
     title: 'Last seen & online',

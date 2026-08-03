@@ -49,12 +49,28 @@ export default function ForwardScreen() {
   const [selected, setSelected] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
 
-  // The message is read from the cache the chat screen already populated, so
+  // The messages are read from the cache the chat screen already populated, so
   // forwarding works offline for anything currently on screen.
-  const message: Message | null = useMemo(() => {
-    if (!chatId || !messageId) return null;
-    return (messages[chatId] ?? []).find((m) => m.id === messageId) ?? null;
-  }, [messages, chatId, messageId]);
+  //
+  // Two entry points land here: the single-message action sheet sends
+  // `messageId`, and selection mode sends a comma-separated `messageIds`. Both
+  // resolve to a list so the send path below has one shape to handle.
+  const forwardList: Message[] = useMemo(() => {
+    if (!chatId) return [];
+    const pool = messages[chatId] ?? [];
+    const ids = messageIds
+      ? messageIds.split(',').filter(Boolean)
+      : messageId
+        ? [messageId]
+        : [];
+    // Preserve transcript order rather than selection order, so a forwarded
+    // thread reads the same way it did in the original chat.
+    const wanted = new Set(ids);
+    return pool.filter((m) => wanted.has(m.id));
+  }, [messages, chatId, messageId, messageIds]);
+
+  /** The single message, when there is exactly one — drives the preview card. */
+  const message: Message | null = forwardList.length === 1 ? forwardList[0] : null;
 
   const rows = useMemo(() => {
     const q = term.trim().toLowerCase();
@@ -80,15 +96,19 @@ export default function ForwardScreen() {
   }, []);
 
   const send = useCallback(async () => {
-    if (!myUid || !message || selected.length === 0 || sending) return;
+    if (!myUid || forwardList.length === 0 || selected.length === 0 || sending) return;
 
     setSending(true);
     // Sequential rather than parallel: each forward may have to create a chat,
-    // and two concurrent creations for the same pair would race.
+    // and two concurrent creations for the same pair would race. The inner loop
+    // is ordered too, so a multi-message forward arrives in transcript order
+    // instead of whichever write happened to land first.
     const failed: string[] = [];
     for (const uid of selected) {
       try {
-        await forwardMessage(message, myUid, uid);
+        for (const m of forwardList) {
+          await forwardMessage(m, myUid, uid);
+        }
       } catch (e) {
         console.warn('[Flyer/forward] failed', uid, e);
         failed.push(users[uid]?.name ?? 'a contact');
@@ -105,9 +125,18 @@ export default function ForwardScreen() {
       'Some messages were not sent',
       `Could not forward to ${failed.join(', ')}. Please try again.`
     );
-  }, [myUid, message, selected, sending, users, router]);
+  }, [myUid, forwardList, selected, sending, users, router]);
 
-  const preview = message ? previewFor(message.type, message.text) : '';
+  /**
+   * What is being forwarded, as one line. A single message shows its own
+   * preview; a selection shows a count, because the individual previews would
+   * not fit and a bare count is what WhatsApp shows too.
+   */
+  const preview = message
+    ? previewFor(message.type, message.text)
+    : forwardList.length > 1
+      ? `${forwardList.length} messages`
+      : '';
 
   return (
     <View style={[styles.root, { backgroundColor: theme.colors.bg }]}>
@@ -137,7 +166,7 @@ export default function ForwardScreen() {
         </View>
       </View>
 
-      {message ? (
+      {preview ? (
         <View style={[styles.preview, { backgroundColor: theme.colors.surfaceAlt }]}>
           <Icon name="forward" size={16} color={theme.colors.textMuted} />
           <Text

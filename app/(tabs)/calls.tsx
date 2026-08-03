@@ -158,12 +158,21 @@ export default function CallsScreen() {
     [entries]
   );
 
+  // Depend on the *contents*, not the array identity. `peerIds` is a fresh array
+  // on every history snapshot, so a reference dep would tear down and re-attach
+  // every profile listener each time any call row changed — including the common
+  // case where the same people are involved and nothing about the set moved.
+  const peerKey = peerIds.join(',');
+
   useEffect(() => {
     const offs = peerIds.map((uid) => listenToUser(uid));
     return () => {
       for (const off of offs) off();
     };
-  }, [peerIds.join(',')]);
+    // `peerKey` is the checkable stand-in for `peerIds`: same contents, same
+    // string, so the listeners are rebuilt exactly when the peer set changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peerKey]);
 
   const startCall = useCallback(async (peer: UserProfile, type: CallType) => {
     const started = await CallManager.startCall(peer, type);
