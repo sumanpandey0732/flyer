@@ -12,6 +12,7 @@
     "lint": "expo lint",
     "doctor": "npx expo-doctor",
     "check:lock": "node scripts/check-lock.mjs",
+    "check:rules": "node scripts/check-rules.mjs",
     "fixdeps": "npx expo install --check"
   },
   "dependencies": {

@@ -10,14 +10,14 @@
         ".write": "auth != null && auth.uid === $uid",
         ".validate": "newData.hasChildren(['name', 'email', 'createdAt'])",
         "uid": {
-          "//": "Denormalised copy of the key. Redundant, but the client writes it and the profile object is passed around as a self-contained value, so it has to be permitted — and pinned to the key so it can never disagree with it.",
+          // Denormalised copy of the key. Redundant, but the client writes it and the profile object is passed around as a self-contained value, so it has to be permitted — and pinned to the key so it can never disagree with it.
           ".validate": "newData.isString() && newData.val() === $uid"
         },
         "name": {
           ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 64"
         },
         "username": {
-          "//": "Lowercase handle. Uniqueness is enforced by the `usernames` index, not here — this field only has to match the claim. The check walks up via newData rather than `root` because `root` is the pre-write state, and the claim is written in the same fan-out as this field.",
+          // Lowercase handle. Uniqueness is enforced by the `usernames` index, not here — this field only has to match the claim. The check walks up via newData rather than `root` because `root` is the pre-write state, and the claim is written in the same fan-out as this field.
           ".validate": "newData.isString() && newData.val().matches(/^[a-z0-9_.]{3,24}$/) && newData.parent().parent().parent().child('usernames').child(newData.val()).val() === $uid"
         },
         "email": {
@@ -51,7 +51,7 @@
     },
 
     "usernames": {
-      "//": "handle -> uid. Readable so the app can check availability and resolve a handle to a profile. A claim may only be created if free, and only deleted by its owner — that pair is what makes handles unique without a server.",
+      // handle -> uid. Readable so the app can check availability and resolve a handle to a profile. A claim may only be created if free, and only deleted by its owner — that pair is what makes handles unique without a server.
       ".read": "auth != null",
       "$handle": {
         ".write": "auth != null && ((!data.exists() && newData.val() === auth.uid) || (data.val() === auth.uid && !newData.exists()))",
@@ -80,7 +80,7 @@
       "$chatId": {
         ".read": "auth != null && data.child('participants').child(auth.uid).exists()",
 
-        "//": "Create only. 1:1 ids are the sorted uid join, so membership is provable from the key itself; group ids are push keys, so the proof is that the creator writes themselves in as participant and admin.",
+        // Create only. 1:1 ids are the sorted uid join, so membership is provable from the key itself; group ids are push keys, so the proof is that the creator writes themselves in as participant and admin.
         ".write": "auth != null && !data.exists() && newData.exists() && newData.child('participants').child(auth.uid).val() === true && !newData.hasChild('mutedBy') && !newData.hasChild('clearedAt') && (($chatId.contains(auth.uid) && newData.child('isGroup').val() !== true) || (newData.child('isGroup').val() === true && newData.child('admins').child(auth.uid).val() === true && newData.child('createdBy').val() === auth.uid))",
 
         "isGroup": { ".validate": "newData.isBoolean()" },
@@ -102,7 +102,7 @@
 
         "admins": {
           "$uid": {
-            "//": "Admins grant and revoke. The self-clause is what lets a departing admin drop their own badge in the same fan-out that removes them.",
+            // Admins grant and revoke. The self-clause is what lets a departing admin drop their own badge in the same fan-out that removes them.
             ".write": "auth != null && root.child('chats').child($chatId).child('admins').child(auth.uid).val() === true || (auth != null && auth.uid === $uid && !newData.exists())",
             ".validate": "newData.val() === true && newData.parent().parent().child('participants').child($uid).val() === true"
           }
@@ -110,7 +110,7 @@
 
         "participants": {
           "$uid": {
-            "//": "Three ways this changes: a 1:1 chat proves membership from the key, a group admin adds or removes, or a member removes themselves by leaving.",
+            // Three ways this changes: a 1:1 chat proves membership from the key, a group admin adds or removes, or a member removes themselves by leaving.
             ".write": "auth != null && (($chatId.contains(auth.uid) && $chatId.contains($uid) && !data.exists() && newData.val() === true) || root.child('chats').child($chatId).child('admins').child(auth.uid).val() === true || (auth.uid === $uid && !newData.exists()))",
             ".validate": "newData.val() === true && ($chatId.contains($uid) || newData.parent().parent().child('isGroup').val() === true)"
           }
@@ -133,7 +133,7 @@
 
         "unread": {
           "$uid": {
-            "//": "Membership is read from the *merged* tree, not `root`: a new member's counter is seeded to 0 in the same fan-out that adds them, so the pre-write state does not know them yet. Deletes are the mirror case — the participant disappears alongside the counter, so authority for those comes from `root`.",
+            // Membership is read from the *merged* tree, not `root`: a new member's counter is seeded to 0 in the same fan-out that adds them, so the pre-write state does not know them yet. Deletes are the mirror case — the participant disappears alongside the counter, so authority for those comes from `root`.
             ".write": "auth != null && root.child('chats').child($chatId).child('participants').child(auth.uid).exists() && (newData.parent().parent().child('participants').child($uid).exists() || (!newData.exists() && (root.child('chats').child($chatId).child('admins').child(auth.uid).val() === true || auth.uid === $uid)))",
             ".validate": "newData.isNumber() && newData.val() >= 0"
           }
@@ -162,7 +162,7 @@
         ".read": "auth != null && auth.uid === $uid",
         ".indexOn": ["lastTimestamp"],
         "$chatId": {
-          "//": "Owner writes their own index freely. Others may only bump it, and only if they share the chat: a 1:1 peer is provable from the key, a group member from the participant list. The last clause is for group admins, who seed a new member's index when adding them and clear it when removing them — in neither case is the target a participant in the pre-write tree, so the clause above cannot cover it.",
+          // Owner writes their own index freely. Others may only bump it, and only if they share the chat: a 1:1 peer is provable from the key, a group member from the participant list. The last clause is for group admins, who seed a new member's index when adding them and clear it when removing them — in neither case is the target a participant in the pre-write tree, so the clause above cannot cover it.
           ".write": "auth != null && ((auth.uid === $uid && ($chatId.contains($uid) || root.child('chats').child($chatId).child('participants').child($uid).exists())) || ($chatId.contains($uid) && $chatId.contains(auth.uid)) || (root.child('chats').child($chatId).child('participants').child(auth.uid).exists() && root.child('chats').child($chatId).child('participants').child($uid).exists()) || root.child('chats').child($chatId).child('admins').child(auth.uid).val() === true)",
           ".validate": "newData.hasChild('lastTimestamp')",
           "lastTimestamp": { ".validate": "newData.isNumber() && newData.val() > 0" },
@@ -218,7 +218,7 @@
           "forwardedFrom": { ".validate": "newData.isString() && newData.val().length <= 128" },
 
           "event": {
-            "//": "Only on system rows, and only in a group. `by` must be the author: the transcript's account of who did something has to match who wrote it.",
+            // Only on system rows, and only in a group. `by` must be the author: the transcript's account of who did something has to match who wrote it.
             ".validate": "newData.parent().child('type').val() === 'system' && root.child('chats').child($chatId).child('isGroup').val() === true && newData.hasChild('kind') && (!newData.hasChild('by') || newData.child('by').val() === auth.uid)",
             "kind": {
               ".validate": "newData.isString() && newData.val().matches(/^(group_created|members_added|member_removed|member_left|group_renamed|group_photo_changed|admin_granted|admin_revoked)$/)"
@@ -406,7 +406,7 @@
 
     "callHistory": {
       "$uid": {
-        "//": "Cloud Functions is the only author — it writes both sides of a call when the call ends, using the admin SDK, which bypasses these rules. The client may read its own history and delete from it (clearing the list, or swiping one entry away), but may never create or alter a row: an entry the client could forge is a call log that cannot be trusted.",
+        // Cloud Functions is the only author — it writes both sides of a call when the call ends, using the admin SDK, which bypasses these rules. The client may read its own history and delete from it (clearing the list, or swiping one entry away), but may never create or alter a row: an entry the client could forge is a call log that cannot be trusted.
         ".read": "auth != null && auth.uid === $uid",
         ".write": "auth != null && auth.uid === $uid && !newData.exists()",
         ".indexOn": ["startedAt"],
@@ -421,7 +421,7 @@
         ".read": "auth != null && auth.uid === $uid",
         ".indexOn": ["addedAt"],
         "$contactUid": {
-          "//": "Two legitimate writers. (a) The owner: may always remove, but may only add when a request from that person is pending — so nobody can silently insert themselves into your list. (b) The person being added, writing the reciprocal entry into the requester's list while accepting. `root` is the pre-write state, so the still-unaccepted request is visible to both halves of the atomic accept.",
+          // Two legitimate writers. (a) The owner: may always remove, but may only add when a request from that person is pending — so nobody can silently insert themselves into your list. (b) The person being added, writing the reciprocal entry into the requester's list while accepting. `root` is the pre-write state, so the still-unaccepted request is visible to both halves of the atomic accept.
           ".write": "auth != null && $contactUid !== $uid && ((auth.uid === $uid && (!newData.exists() || root.child('contactRequests').child($uid).child($contactUid).exists())) || (auth.uid === $contactUid && newData.exists() && root.child('contactRequests').child($contactUid).child($uid).exists()))",
           ".validate": "newData.hasChildren(['uid', 'addedAt'])",
           "uid": { ".validate": "newData.isString() && newData.val() === $contactUid" },
@@ -433,11 +433,11 @@
 
     "contactRequests": {
       "$uid": {
-        "//": "The recipient's inbox. Only they can read it; the sender tracks their own pending requests in `sentRequests` instead.",
+        // The recipient's inbox. Only they can read it; the sender tracks their own pending requests in `sentRequests` instead.
         ".read": "auth != null && auth.uid === $uid",
         ".indexOn": ["createdAt"],
         "$fromUid": {
-          "//": "The sender may create one (unless blocked, already a contact, or one already exists) and may cancel it. The recipient may only delete — accepting and declining are both deletions, and which one it was is decided by whether contacts entries are written in the same fan-out.",
+          // The sender may create one (unless blocked, already a contact, or one already exists) and may cancel it. The recipient may only delete — accepting and declining are both deletions, and which one it was is decided by whether contacts entries are written in the same fan-out.
           ".write": "auth != null && $fromUid !== $uid && ((auth.uid === $fromUid && (!newData.exists() || (!data.exists() && !root.child('blocks').child($uid).child($fromUid).exists() && !root.child('blocks').child($fromUid).child($uid).exists() && !root.child('contacts').child($uid).child($fromUid).exists()))) || (auth.uid === $uid && !newData.exists()))",
           ".validate": "newData.hasChildren(['uid', 'createdAt'])",
           "uid": { ".validate": "newData.isString() && newData.val() === $fromUid" },
@@ -449,7 +449,7 @@
 
     "sentRequests": {
       "$uid": {
-        "//": "The sender's outbox, mirroring `contactRequests`. The recipient needs delete rights here so that accepting or declining clears the sender's pending state in the same atomic write.",
+        // The sender's outbox, mirroring `contactRequests`. The recipient needs delete rights here so that accepting or declining clears the sender's pending state in the same atomic write.
         ".read": "auth != null && auth.uid === $uid",
         ".indexOn": ["createdAt"],
         "$toUid": {
