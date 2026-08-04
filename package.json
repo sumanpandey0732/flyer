@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "expo lint",
     "doctor": "npx expo-doctor",
+    "check:lock": "node scripts/check-lock.mjs",
     "fixdeps": "npx expo install --check"
   },
   "dependencies": {
