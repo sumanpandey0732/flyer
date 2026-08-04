@@ -9,6 +9,10 @@
       "$uid": {
         ".write": "auth != null && auth.uid === $uid",
         ".validate": "newData.hasChildren(['name', 'email', 'createdAt'])",
+        "uid": {
+          "//": "Denormalised copy of the key. Redundant, but the client writes it and the profile object is passed around as a self-contained value, so it has to be permitted — and pinned to the key so it can never disagree with it.",
+          ".validate": "newData.isString() && newData.val() === $uid"
+        },
         "name": {
           ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 64"
         },
@@ -402,9 +406,13 @@
 
     "callHistory": {
       "$uid": {
+        "//": "Cloud Functions is the only author — it writes both sides of a call when the call ends, using the admin SDK, which bypasses these rules. The client may read its own history and delete from it (clearing the list, or swiping one entry away), but may never create or alter a row: an entry the client could forge is a call log that cannot be trusted.",
         ".read": "auth != null && auth.uid === $uid",
-        ".write": false,
-        ".indexOn": ["startedAt"]
+        ".write": "auth != null && auth.uid === $uid && !newData.exists()",
+        ".indexOn": ["startedAt"],
+        "$callId": {
+          ".write": "auth != null && auth.uid === $uid && !newData.exists()"
+        }
       }
     },
 

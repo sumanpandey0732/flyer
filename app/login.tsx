@@ -22,6 +22,7 @@ import {
   signInWithGoogle,
   signUpWithEmail,
 } from '@/src/services/AuthManager';
+import { consumeFirstLaunch } from '@/src/services/FirstLaunchService';
 
 type Mode = 'landing' | 'signin' | 'signup' | 'reset';
 
@@ -36,6 +37,30 @@ export default function LoginScreen() {
   const [error, setError] = useState<string | null>(null);
   const [resetSent, setResetSent] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  /**
+   * On a brand-new install, open straight on "Create account".
+   *
+   * Someone launching Flyer for the first time has no account, so the landing
+   * screen's real question is "sign in or sign up?" — one they can only answer
+   * one way. Every launch after this goes to the landing screen as before: a
+   * returning user who signed out is far more likely to be coming back to an
+   * account than making a second one.
+   *
+   * `landing` stays the initial state so the first paint is never blank. The
+   * flag read is a single AsyncStorage hit that resolves well inside the logo
+   * animation, so the switch is not visible.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    void consumeFirstLaunch().then((isFirst) => {
+      // Guard against the user having already tapped through during the read.
+      if (!cancelled && isFirst) setMode('signup');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const logoOpacity = useRef(new Animated.Value(0)).current;
   const logoScale = useRef(new Animated.Value(0.8)).current;
